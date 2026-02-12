@@ -86,6 +86,7 @@ export function useEventRevealer() {
   const pendingRef = useRef<Partial<GameEvent>[]>([]);
   const heroesRef = useRef<GameHeroSnapshot[]>([]);
   const revealedRef = useRef<Partial<GameEvent>[]>([]);
+  const intervalRef = useRef(1000); // 动态间隔（毫秒）
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -115,19 +116,38 @@ export function useEventRevealer() {
     setRevealProgress(prev => ({ ...prev, current: prev.current + 1 }));
 
     if (pending.length > 0) {
-      timerRef.current = setTimeout(revealNext, 1000);
+      timerRef.current = setTimeout(revealNext, intervalRef.current);
     } else {
       setIsRevealing(false);
     }
   }, []);
 
-  const startReveal = useCallback((events: Partial<GameEvent>[], baseHeroes: GameHeroSnapshot[]) => {
+  /**
+   * 开始逐条揭晓事件。
+   * @param events - 要揭晓的事件列表
+   * @param baseHeroes - 揭晓前的英雄快照
+   * @param durationMs - 可用展示时长（毫秒），事件会均匀铺满这段时间
+   */
+  const startReveal = useCallback((
+    events: Partial<GameEvent>[],
+    baseHeroes: GameHeroSnapshot[],
+    durationMs?: number,
+  ) => {
     clearTimer();
 
     if (!events || events.length === 0) return;
 
     // Filter out low-priority non-actionable events to keep reveal punchy
     const revealable = events.filter(e => e.eventType !== 'decision');
+
+    // 计算动态间隔：均匀铺满展示窗口，留 2s 缓冲
+    if (durationMs && revealable.length > 0) {
+      const available = durationMs - 2000; // 留 2s 余量
+      const raw = Math.floor(available / revealable.length);
+      intervalRef.current = Math.max(500, Math.min(raw, 2500)); // 限制 500ms~2500ms
+    } else {
+      intervalRef.current = 1000; // 默认 1s
+    }
 
     pendingRef.current = [...revealable];
     heroesRef.current = baseHeroes.map(h => ({ ...h }));

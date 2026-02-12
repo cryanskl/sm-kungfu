@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processRound } from '@/lib/game/engine';
 import { supabaseAdmin } from '@/lib/supabase';
 import { mapGameStateRow } from '@/lib/game/state-mapper';
+import { requireSession } from '@/lib/auth';
 
 export const maxDuration = 60; // Vercel Pro: 60s 超时
 
@@ -10,17 +11,27 @@ const recentCalls = new Map<string, number>();
 
 export async function POST(request: NextRequest) {
   try {
+    const authError = await requireSession();
+    if (authError) return authError;
     const { gameId, roundNumber } = await request.json();
 
     if (!gameId || !roundNumber || roundNumber < 1 || roundNumber > 6) {
       return NextResponse.json({ error: 'Invalid params' }, { status: 400 });
     }
 
-    // 节流检查
+    // 节流检查：5秒内重复调用直接返回缓存
     const throttleKey = `${gameId}_${roundNumber}`;
     const lastCall = recentCalls.get(throttleKey);
     if (lastCall && Date.now() - lastCall < 5000) {
-      // 5秒内重复调用，直接返回缓存（processRound 本身也是幂等的）
+      const { data: cachedState } = await supabaseAdmin
+        .from('game_state').select('*').eq('id', 'current').single();
+      return NextResponse.json({
+        roundNumber,
+        events: [],
+        heroes: [],
+        gameState: cachedState ? mapGameStateRow(cachedState) : undefined,
+        throttled: true,
+      });
     }
     recentCalls.set(throttleKey, Date.now());
     // 清理旧条目防内存泄漏

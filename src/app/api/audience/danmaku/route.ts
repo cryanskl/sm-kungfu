@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
-import { transformDanmaku, randomDanmakuColor } from '@/lib/game/danmaku-transform';
+import { transformDanmaku, influenceAwareDanmakuColor } from '@/lib/game/danmaku-transform';
 import { cookies } from 'next/headers';
-
-// 简易限流：audience_id → 上次发送时间
-const rateLimitMap = new Map<string, number>();
-const RATE_LIMIT_MS = 5000;
+import { danmakuRateLimiter } from '@/lib/rate-limit';
+import { detectInfluence } from '@/lib/game/audience-influence';
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,17 +23,16 @@ export async function POST(request: NextRequest) {
     }
 
     // 限流检查
-    const lastSent = rateLimitMap.get(audienceId) || 0;
-    if (Date.now() - lastSent < RATE_LIMIT_MS) {
-      const wait = Math.ceil((RATE_LIMIT_MS - (Date.now() - lastSent)) / 1000);
+    const rl = danmakuRateLimiter.check(audienceId);
+    if (!rl.allowed) {
+      const wait = Math.ceil((rl.retryAfterMs || 0) / 1000);
       return NextResponse.json({ error: `少侠稍安勿躁，${wait}秒后再发` }, { status: 429 });
     }
-    rateLimitMap.set(audienceId, Date.now());
 
-    // 获取当前游戏 ID
+    // 获取当前游戏状态（合并查询：game_id + heroes + danmaku + audience_influence）
     const { data: gs } = await supabaseAdmin
       .from('game_state')
-      .select('game_id')
+      .select('game_id, heroes, danmaku, audience_influence')
       .eq('id', 'current')
       .single();
 
@@ -44,34 +41,53 @@ export async function POST(request: NextRequest) {
     }
 
     // 转换弹幕
-    const wuxiaText = transformDanmaku(text);
-    const color = randomDanmakuColor();
+    const trimmed = text.trim();
+    const wuxiaText = transformDanmaku(trimmed);
+    const color = influenceAwareDanmakuColor(trimmed);
     const id = crypto.randomUUID();
+
+    // 弹幕天意：关键词检测
+    const heroNames = (gs.heroes || []).map((h: any) => h.heroName);
+    const influences = detectInfluence(trimmed, heroNames);
+
+    let currentInfluence = gs.audience_influence || {
+      counters: {}, heroTargets: {}, lastResetRound: 0, activeEffects: [],
+    };
+
+    if (influences.length > 0) {
+      currentInfluence = { ...currentInfluence, counters: { ...currentInfluence.counters }, heroTargets: { ...currentInfluence.heroTargets } };
+      for (const inf of influences) {
+        currentInfluence.counters[inf.category] = (currentInfluence.counters[inf.category] || 0) + 1;
+        if (inf.heroTarget) {
+          if (!currentInfluence.heroTargets[inf.category]) currentInfluence.heroTargets[inf.category] = {};
+          currentInfluence.heroTargets[inf.category] = { ...currentInfluence.heroTargets[inf.category] };
+          currentInfluence.heroTargets[inf.category][inf.heroTarget] =
+            (currentInfluence.heroTargets[inf.category][inf.heroTarget] || 0) + 1;
+        }
+      }
+    }
 
     // 写入 DB
     await supabaseAdmin.from('danmaku').insert({
       id,
       game_id: gs.game_id,
       audience_id: audienceId,
-      original_text: text.trim(),
+      original_text: trimmed,
       wuxia_text: wuxiaText,
       color,
     });
 
-    // 更新 game_state.danmaku（保留最近 30 条）
-    const { data: currentState } = await supabaseAdmin
-      .from('game_state')
-      .select('danmaku')
-      .eq('id', 'current')
-      .single();
-
-    const existing = Array.isArray(currentState?.danmaku) ? currentState.danmaku : [];
+    // 更新 game_state.danmaku + audience_influence（单次 update）
+    const existing = Array.isArray(gs.danmaku) ? gs.danmaku : [];
     const newItem = { id, wuxiaText, color, createdAt: new Date().toISOString() };
     const updated = [...existing, newItem].slice(-30);
 
     await supabaseAdmin
       .from('game_state')
-      .update({ danmaku: updated })
+      .update({
+        danmaku: updated,
+        ...(influences.length > 0 ? { audience_influence: currentInfluence } : {}),
+      })
       .eq('id', 'current');
 
     // 设置 cookie

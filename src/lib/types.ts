@@ -94,6 +94,7 @@ export type GameStatus =
   | 'intro'       // 开场点名
   | 'round_1' | 'round_2' | 'round_3' | 'round_4' | 'round_5' | 'round_6'
   | 'semifinals'  // 半决赛
+  | 'artifact_selection' // 神兵助战（10秒观众投注）
   | 'final'       // 决赛
   | 'ending'      // 封神榜
   | 'ended';      // 已结束
@@ -184,7 +185,7 @@ export interface GameState {
   gameNumber: number;
   status: GameStatus;
   currentRound: number;
-  phase: 'waiting' | 'director' | 'decision' | 'resolution' | 'update' | 'intro' | 'finals' | 'ending';
+  phase: 'waiting' | 'director' | 'decision' | 'resolution' | 'update' | 'intro' | 'finals' | 'artifact_selection' | 'ending';
   theme: string | null;
 
   heroes: GameHeroSnapshot[];
@@ -207,6 +208,15 @@ export interface GameState {
   // 结算展示
   betWinners: BetWinner[];
   balanceRanking: BalanceEntry[];
+
+  // 神兵助战
+  artifactPool: ArtifactPoolState | null;
+
+  // 武林周刊统计
+  battleStats?: import('@/lib/game/battle-stats').BattleStats;
+
+  // 弹幕天意
+  audienceInfluence: AudienceInfluence | null;
 
   // 候补队列
   queueCount: number;
@@ -242,6 +252,8 @@ export interface GameHeroSnapshot {
   wisdom: number;
   constitution: number;
   charisma: number;
+
+  bio?: string;  // 封神榜背景故事
 }
 
 export interface RankEntry {
@@ -280,6 +292,7 @@ export interface NpcTemplate {
   personalityType: PersonalityType;
   catchphrase: string;
   signatureLines: string[];
+  backstory?: string;            // 封神榜背景故事
 
   // 六维属性
   strength: number;
@@ -333,6 +346,7 @@ export interface BetWinner {
   amount: number;
   payout: number;
   rank: number;        // 目标英雄排名 1/2/3
+  multiplier?: number; // 神兵倍率（展示用）
 }
 
 export interface BalanceEntry {
@@ -346,8 +360,55 @@ export interface BalanceEntry {
 export interface DanmakuItem {
   id: string;
   wuxiaText: string;
-  color: 'white' | 'gold' | 'cyan';
+  color: 'white' | 'gold' | 'cyan' | 'red';
+  isCommentary?: boolean;
   createdAt: string;
+}
+
+// --- 神兵助战 ---
+
+export type ArtifactCategory = 'weapon' | 'armor' | 'technique' | 'healing' | 'accessory';
+
+export interface ArtifactEffect {
+  attackBoost?: number;      // 攻击加成
+  defenseBoost?: number;     // 防御加成
+  hpBonus?: number;          // 决赛前HP加成
+  ultimateBoost?: number;    // 绝招伤害倍率加成（0.3 = +30%）
+  bluffBoost?: number;       // 诈的成功率加成
+  damageReduction?: number;  // 固定伤害减免
+}
+
+export interface ArtifactDef {
+  id: string;
+  name: string;
+  category: ArtifactCategory;
+  price: number;
+  multiplier: number;          // 赢了返回 price × multiplier
+  description: string;
+  effect: ArtifactEffect;
+  icon: string;
+}
+
+export interface ArtifactGiftSummary {
+  audienceId: string;
+  displayName: string;
+  artifactId: string;
+  artifactName: string;
+  amount: number;
+}
+
+export interface ArtifactPoolState {
+  finalists: {
+    heroId: string;
+    heroName: string;
+    totalValue: number;
+    giftCount: number;
+    artifacts: ArtifactGiftSummary[];
+  }[];
+  availableArtifacts: ArtifactDef[];
+  totalPrizePool: number;  // intro下注 + 神器购买
+  introBetTotal: number;
+  isOpen: boolean;
 }
 
 // Shades API 返回的兴趣标签
@@ -363,4 +424,12 @@ export interface SecondMeShade {
   shadeDescriptionPublic?: string;
   shadeContentPublic?: string;
   hasPublicContent?: boolean;
+}
+
+// --- 弹幕天意：观众影响力 ---
+export interface AudienceInfluence {
+  counters: Record<string, number>;
+  heroTargets: Record<string, Record<string, number>>;
+  lastResetRound: number;
+  activeEffects: string[];
 }

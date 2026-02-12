@@ -8,6 +8,8 @@ import { NPC_TEMPLATES, pickRandomTrait, GAME_TRAITS } from './npc-data/template
 import * as C from './constants';
 import { narratives } from './narratives';
 import { rollEncounters } from './encounters';
+import { applyAudienceEffects } from './audience-influence';
+import type { AudienceInfluence } from '../types';
 
 // 确定性 trait 分配：同一局同一 NPC 始终得到同一特质（技术要点：随机种子与可复现）
 function getStableTrait(gameId: string, npcId: string): typeof GAME_TRAITS[0] {
@@ -17,6 +19,59 @@ function getStableTrait(gameId: string, npcId: string): typeof GAME_TRAITS[0] {
     hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
   }
   return GAME_TRAITS[Math.abs(hash) % GAME_TRAITS.length];
+}
+
+// ============================================================
+// 决策预取缓存（回合展示期间后台预取，避免 processRound 时等 SecondMe API）
+// ============================================================
+
+const decisionCache = new Map<string, Map<string, Decision>>();
+const prefetchInProgress = new Set<string>();
+
+function cacheKey(gameId: string, roundNumber: number) {
+  return `${gameId}_${roundNumber}`;
+}
+
+/**
+ * 预取某回合的所有决策（SecondMe API + NPC），存入内存缓存。
+ * 由客户端在回合展示开始时立即调用，这样 processRound 跑到时直接读缓存。
+ */
+export async function prefetchDecisions(gameId: string, roundNumber: number): Promise<boolean> {
+  const key = cacheKey(gameId, roundNumber);
+
+  // 已有缓存或正在预取
+  if (decisionCache.has(key) || prefetchInProgress.has(key)) {
+    return true;
+  }
+  prefetchInProgress.add(key);
+
+  const t0 = Date.now();
+  console.log(`[Prefetch] ▶ start game=${gameId.slice(0,8)} round=${roundNumber}`);
+
+  try {
+    const { data: gameHeroes } = await supabaseAdmin
+      .from('game_heroes')
+      .select('*, hero:heroes(*)')
+      .eq('game_id', gameId)
+      .order('seat_number');
+
+    if (!gameHeroes || gameHeroes.length === 0) {
+      console.warn('[Prefetch] no heroes found');
+      return false;
+    }
+
+    const snapshots = gameHeroesToSnapshots(gameHeroes);
+    const decisions = await collectDecisions(gameId, roundNumber, gameHeroes, snapshots);
+
+    decisionCache.set(key, decisions);
+    console.log(`[Prefetch] ✓ round=${roundNumber} done in ${Date.now()-t0}ms, ${decisions.size} decisions cached`);
+    return true;
+  } catch (err) {
+    console.error('[Prefetch] error:', err);
+    return false;
+  } finally {
+    prefetchInProgress.delete(key);
+  }
 }
 
 // ============================================================
@@ -107,8 +162,18 @@ export async function processRound(gameId: string, roundNumber: number): Promise
   const snapshots = gameHeroesToSnapshots(gameHeroes);
   const aliveSnapshots = snapshots.filter(h => !h.isEliminated);
 
-  // 1. 收集所有决策
-  const decisions = await collectDecisions(gameId, roundNumber, gameHeroes, snapshots);
+  // 1. 收集所有决策（优先从预取缓存读取）
+  const key = cacheKey(gameId, roundNumber);
+  let decisions: Map<string, Decision>;
+  const cached = decisionCache.get(key);
+  if (cached) {
+    decisions = cached;
+    decisionCache.delete(key);
+    console.log(`[Engine] ⚡ round=${roundNumber} using prefetched decisions (${decisions.size} cached)`);
+  } else {
+    console.log(`[Engine] 🐢 round=${roundNumber} no prefetch cache, collecting decisions now...`);
+    decisions = await collectDecisions(gameId, roundNumber, gameHeroes, snapshots);
+  }
 
   // 2. 结算
   const events = await resolveRound(gameId, roundNumber, decisions, gameHeroes, snapshots);
@@ -279,6 +344,38 @@ async function resolveRound(
     data: { roundNumber, title: DIRECTOR_EVENTS[roundNumber].title },
   } as any);
 
+  // --- 弹幕天意 ---
+  {
+    const { data: gsInfluence } = await supabaseAdmin
+      .from('game_state').select('audience_influence').eq('id', 'current').single();
+
+    const influence = gsInfluence?.audience_influence as AudienceInfluence | null;
+    const { events: influenceEvents, consumed } = applyAudienceEffects(
+      influence, snapshots, updates, gameHeroes
+    );
+    events.push(...influenceEvents);
+
+    // 重置已消费的计数器
+    if (consumed.length > 0 && influence) {
+      const updated = { ...influence, counters: { ...influence.counters }, heroTargets: { ...influence.heroTargets } };
+      for (const key of consumed) {
+        if (key.includes(':')) {
+          const [cat, hero] = key.split(':');
+          if (updated.heroTargets?.[cat]?.[hero] !== undefined) {
+            updated.heroTargets[cat] = { ...updated.heroTargets[cat] };
+            updated.heroTargets[cat][hero] = 0;
+          }
+        } else {
+          updated.counters[key] = 0;
+        }
+      }
+      updated.lastResetRound = roundNumber;
+      updated.activeEffects = consumed;
+      await supabaseAdmin.from('game_state')
+        .update({ audience_influence: updated }).eq('id', 'current');
+    }
+  }
+
   // --- 分类决策 ---
   const fighters: { heroId: string; target: string; decision: Decision }[] = [];
   const trainers: string[] = [];
@@ -286,6 +383,7 @@ async function resolveRound(
   const allyers: { heroId: string; target: string }[] = [];
   const betrayers: { heroId: string; target: string }[] = [];
   const resters: string[] = [];
+  const deathPactHeroes: string[] = [];
 
   for (const [heroId, decision] of decisions) {
     const snapshot = getSnapshot(heroId);
@@ -326,17 +424,23 @@ async function resolveRound(
         break;
     }
 
-    // R5 生死状
+    // R5 生死状（收集，后面批量写入）
     if (roundNumber === 5 && decision.signDeathPact) {
-      await supabaseAdmin
-        .from('game_heroes')
-        .update({ has_death_pact: true, has_ultimate: true })
-        .eq('game_id', gameId)
-        .eq('hero_id', heroId);
-
+      deathPactHeroes.push(heroId);
       addDelta(updates, heroId, 'reputation', C.REP.SIGN_DEATH_PACT);
       addDelta(updates, heroId, 'hot', C.HOT.SIGN_DEATH_PACT);
     }
+  }
+
+  // --- R5 生死状批量写入 ---
+  if (deathPactHeroes.length > 0) {
+    await Promise.all(deathPactHeroes.map(heroId =>
+      supabaseAdmin.from('game_heroes')
+        .update({ has_death_pact: true, has_ultimate: true })
+        .eq('game_id', gameId)
+        .eq('hero_id', heroId)
+        .then()
+    ));
   }
 
   // --- R1 残卷争夺 ---
@@ -458,16 +562,10 @@ async function resolveRound(
       const heroName = getSnapshot(heroId).heroName;
       const targetName = getSnapshot(target).heroName;
 
-      await supabaseAdmin
-        .from('game_heroes')
-        .update({ ally_hero_id: target })
-        .eq('game_id', gameId)
-        .eq('hero_id', heroId);
-      await supabaseAdmin
-        .from('game_heroes')
-        .update({ ally_hero_id: heroId })
-        .eq('game_id', gameId)
-        .eq('hero_id', target);
+      await Promise.all([
+        supabaseAdmin.from('game_heroes').update({ ally_hero_id: target }).eq('game_id', gameId).eq('hero_id', heroId),
+        supabaseAdmin.from('game_heroes').update({ ally_hero_id: heroId }).eq('game_id', gameId).eq('hero_id', target),
+      ]);
 
       events.push({
         eventType: 'ally_formed',
@@ -491,16 +589,10 @@ async function resolveRound(
     // 偷资源
     const stolenRep = Math.round(targetSnapshot.reputation * C.R3_BETRAY_RESOURCE_STEAL);
 
-    await supabaseAdmin
-      .from('game_heroes')
-      .update({ ally_hero_id: null })
-      .eq('game_id', gameId)
-      .eq('hero_id', heroId);
-    await supabaseAdmin
-      .from('game_heroes')
-      .update({ ally_hero_id: null })
-      .eq('game_id', gameId)
-      .eq('hero_id', target);
+    await Promise.all([
+      supabaseAdmin.from('game_heroes').update({ ally_hero_id: null }).eq('game_id', gameId).eq('hero_id', heroId),
+      supabaseAdmin.from('game_heroes').update({ ally_hero_id: null }).eq('game_id', gameId).eq('hero_id', target),
+    ]);
 
     const repDelta = roundNumber === 3 ? 0 : C.REP.BETRAY; // R3不扣声望
 
@@ -567,7 +659,7 @@ async function resolveRound(
   {
     const aliveNames = alive.filter(h => !h.isEliminated).map(h => h.heroName);
     // 每回合 ~15-20 个奇遇，让 30s 内每秒都有新事件
-    const encounterCount = Math.min(Math.max(10, aliveNames.length + 8), 20);
+    const encounterCount = Math.min(Math.max(12, aliveNames.length + 10), 25);
     const rolled = rollEncounters(roundNumber, aliveNames, encounterCount);
 
     for (const { heroName, encounter } of rolled) {
@@ -626,7 +718,8 @@ async function resolveRound(
     }
   }
 
-  // --- 应用所有更新到数据库 ---
+  // --- 应用所有更新到数据库（并行写入） ---
+  const heroUpdatePromises: PromiseLike<any>[] = [];
   for (const [heroId, deltas] of updates) {
     if (Object.keys(deltas).length === 0) continue;
 
@@ -669,12 +762,16 @@ async function resolveRound(
       } as any);
     }
 
-    await supabaseAdmin
-      .from('game_heroes')
-      .update(updateObj)
-      .eq('game_id', gameId)
-      .eq('hero_id', heroId);
+    heroUpdatePromises.push(
+      supabaseAdmin
+        .from('game_heroes')
+        .update(updateObj)
+        .eq('game_id', gameId)
+        .eq('hero_id', heroId)
+        .then()
+    );
   }
+  await Promise.all(heroUpdatePromises);
 
   return events;
 }
@@ -895,6 +992,7 @@ function gameHeroesToSnapshots(gameHeroes: any[]): GameHeroSnapshot[] {
     wisdom: gh.hero?.wisdom || 10,
     constitution: gh.hero?.constitution || 10,
     charisma: gh.hero?.charisma || 10,
+    bio: gh.hero?.backstory || '',
   }));
 }
 

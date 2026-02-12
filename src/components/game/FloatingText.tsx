@@ -8,7 +8,7 @@ interface FloatItem {
   id: string;
   moveName: string;
   damage: number;
-  x: number; // % offset for random horizontal spread
+  x: number;
 }
 
 const COMBAT_TYPES = new Set(['fight', 'gang_up', 'scramble']);
@@ -50,7 +50,6 @@ export function FloatingText({ overrideEvents }: { overrideEvents?: Partial<Game
     }
   }, [overrideEvents, gameState?.recentEvents]);
 
-  // Auto-remove after animation
   useEffect(() => {
     if (items.length === 0) return;
     const timer = setTimeout(() => {
@@ -59,7 +58,6 @@ export function FloatingText({ overrideEvents }: { overrideEvents?: Partial<Game
     return () => clearTimeout(timer);
   }, [items.length]);
 
-  // Clean processed set periodically
   useEffect(() => {
     const interval = setInterval(() => {
       if (processedRef.current.size > 200) processedRef.current.clear();
@@ -78,12 +76,12 @@ export function FloatingText({ overrideEvents }: { overrideEvents?: Partial<Game
           style={{ left: `${item.x}%`, top: '30%' }}
         >
           <div className="text-center whitespace-nowrap">
-            <div className="text-lg font-black text-[--accent-gold]"
-              style={{ textShadow: '0 0 10px rgba(212,168,67,0.6)' }}>
+            <div className="text-lg font-black text-gold font-display"
+              style={{ textShadow: '0 0 12px var(--gold-glow)' }}>
               {item.moveName}
             </div>
-            <div className="text-xl font-black text-[--accent-red]"
-              style={{ textShadow: '0 0 8px rgba(192,57,43,0.6)' }}>
+            <div className="text-xl font-black text-vermillion"
+              style={{ textShadow: '0 0 10px var(--vermillion-glow)' }}>
               -{item.damage}
             </div>
           </div>

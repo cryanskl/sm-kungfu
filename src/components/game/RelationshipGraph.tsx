@@ -21,7 +21,6 @@ export function RelationshipGraph() {
   const events = gameState?.recentEvents || [];
 
   const { positions, edges } = useMemo(() => {
-    // Node positions in a circle
     const pos = new Map<string, { x: number; y: number }>();
     heroes.forEach((h, i) => {
       const angle = (2 * Math.PI * i) / heroes.length - Math.PI / 2;
@@ -31,7 +30,6 @@ export function RelationshipGraph() {
       });
     });
 
-    // Edges from alliances
     const edgeSet = new Set<string>();
     const edgeList: Edge[] = [];
     const addEdge = (from: string, to: string, type: Edge['type']) => {
@@ -46,7 +44,6 @@ export function RelationshipGraph() {
       if (h.allyHeroId) addEdge(h.heroId, h.allyHeroId, 'ally');
     }
 
-    // Edges from recent events
     for (const evt of events) {
       if (!evt.heroId || !evt.targetHeroId) continue;
       if (evt.eventType === 'betray') addEdge(evt.heroId, evt.targetHeroId, 'betray');
@@ -59,27 +56,39 @@ export function RelationshipGraph() {
   if (heroes.length === 0) return null;
 
   return (
-    <details className="card-wuxia rounded-xl overflow-hidden">
-      <summary className="px-4 py-3 cursor-pointer text-sm font-bold text-[--text-secondary] hover:text-[--accent-gold] transition select-none">
-        🕸️ 关系网络
+    <details className="card-wuxia rounded-lg overflow-hidden">
+      <summary className="px-4 py-3 cursor-pointer text-sm font-display font-bold text-[--text-dim] hover:text-gold transition select-none flex items-center gap-2">
+        <span>🕸️</span>
+        <span>关系网络</span>
+        <span className="ml-auto text-[10px] text-[--text-dim] font-normal">点击展开</span>
       </summary>
       <div className="px-2 pb-3">
         <svg viewBox={`0 0 ${SIZE} ${SIZE}`} className="w-full max-h-[350px]">
+          <defs>
+            <radialGradient id="nodeGradient">
+              <stop offset="0%" stopColor="#3d3a33" />
+              <stop offset="100%" stopColor="#2a2722" />
+            </radialGradient>
+            <radialGradient id="nodeGradientDead">
+              <stop offset="0%" stopColor="#2a2722" />
+              <stop offset="100%" stopColor="#1c1a16" />
+            </radialGradient>
+          </defs>
           {/* Edges */}
           {edges.map((e, i) => {
             const p1 = positions.get(e.from);
             const p2 = positions.get(e.to);
             if (!p1 || !p2) return null;
-            const styles: Record<Edge['type'], { stroke: string; dasharray?: string; width: number }> = {
-              ally: { stroke: '#d4a843', width: 2 },
-              betray: { stroke: '#c0392b', dasharray: '4 3', width: 2 },
-              fight: { stroke: '#555', width: 1 },
+            const styles: Record<Edge['type'], { stroke: string; dasharray?: string; width: number; opacity: number }> = {
+              ally: { stroke: '#c9a84c', width: 2, opacity: 0.6 },
+              betray: { stroke: '#c13c37', dasharray: '4 3', width: 2, opacity: 0.7 },
+              fight: { stroke: '#4a4540', width: 1, opacity: 0.5 },
             };
             const s = styles[e.type];
             return (
               <line key={i} x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y}
                 stroke={s.stroke} strokeWidth={s.width}
-                strokeDasharray={s.dasharray} opacity={0.7} />
+                strokeDasharray={s.dasharray} opacity={s.opacity} />
             );
           })}
 
@@ -91,18 +100,17 @@ export function RelationshipGraph() {
             return (
               <g key={h.heroId}>
                 <circle cx={p.x} cy={p.y} r={NODE_R}
-                  fill={eliminated ? '#333' : '#1a1a2e'}
-                  stroke={eliminated ? '#555' : '#d4a843'}
-                  strokeWidth={eliminated ? 1 : 2}
-                  opacity={eliminated ? 0.5 : 1}
+                  fill={eliminated ? 'url(#nodeGradientDead)' : 'url(#nodeGradient)'}
+                  stroke={eliminated ? '#3d3a33' : '#c9a84c'}
+                  strokeWidth={eliminated ? 1 : 1.5}
+                  opacity={eliminated ? 0.4 : 1}
                 />
                 <text x={p.x} y={p.y + 1} textAnchor="middle" dominantBaseline="middle"
-                  fontSize="9" fill={eliminated ? '#777' : '#e8e0d0'} fontWeight="bold">
+                  fontSize="9" fill={eliminated ? '#6a6358' : '#e8e0d0'} fontWeight="bold">
                   {h.heroName.slice(0, 2)}
                 </text>
-                {/* Name label below */}
                 <text x={p.x} y={p.y + NODE_R + 12} textAnchor="middle"
-                  fontSize="8" fill={eliminated ? '#555' : '#a09880'}>
+                  fontSize="8" fill={eliminated ? '#4a4540' : '#9a9080'}>
                   {h.heroName.length > 4 ? h.heroName.slice(0, 4) : h.heroName}
                 </text>
               </g>
@@ -111,10 +119,16 @@ export function RelationshipGraph() {
         </svg>
 
         {/* Legend */}
-        <div className="flex justify-center gap-4 text-[10px] text-[--text-secondary] mt-1">
-          <span><span className="inline-block w-3 h-0.5 bg-[--accent-gold] mr-1 align-middle" />联盟</span>
-          <span><span className="inline-block w-3 h-0.5 bg-[--accent-red] mr-1 align-middle border-dashed" style={{ borderBottom: '1px dashed var(--accent-red)' }} />背叛</span>
-          <span><span className="inline-block w-3 h-0.5 bg-gray-500 mr-1 align-middle" />战斗</span>
+        <div className="flex justify-center gap-5 text-[10px] text-[--text-dim] mt-1">
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-4 h-[2px] bg-gold rounded" />联盟
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-4 h-[2px] rounded" style={{ background: 'repeating-linear-gradient(90deg, var(--vermillion), var(--vermillion) 3px, transparent 3px, transparent 6px)' }} />背叛
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-4 h-[1px] bg-ink-faint rounded" />战斗
+          </span>
         </div>
       </div>
     </details>

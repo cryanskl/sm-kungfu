@@ -247,7 +247,7 @@ export async function POST(request: NextRequest) {
       personalityType: gh.hero?.personality_type || 'random',
       seatNumber: gh.seat_number,
       hp: gh.hp,
-      maxHp: 100,
+      maxHp: INITIAL_HP,
       reputation: 0,
       hot: 0,
       morality: gh.morality || 50,
@@ -276,6 +276,8 @@ export async function POST(request: NextRequest) {
       phase: 'waiting',
       heroes: heroSnapshots,
       countdown_seconds: newStatus === 'countdown' ? 30 : null,
+      danmaku: [],
+      recent_events: [],
       updated_at: new Date().toISOString(),
     });
 

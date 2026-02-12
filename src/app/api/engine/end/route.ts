@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
-import { TITLES, BET_RANK_PAYOUTS } from '@/lib/game/constants';
+import { TITLES, ARTIFACTS } from '@/lib/game/constants';
 import { mapGameStateRow } from '@/lib/game/state-mapper';
+import { computeBattleStats } from '@/lib/game/battle-stats';
+import { requireSession } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
+    const authError = await requireSession();
+    if (authError) return authError;
+
     const { gameId } = await request.json();
     if (!gameId) return NextResponse.json({ error: 'Missing gameId' }, { status: 400 });
 
@@ -13,12 +18,25 @@ export async function POST(request: NextRequest) {
       .from('games')
       .update({ status: 'ended', ended_at: new Date().toISOString() })
       .eq('id', gameId)
-      .in('status', ['ending', 'processing_finals'])
+      .in('status', ['ending', 'processing_finals', 'processing_final'])
       .select()
       .single();
 
     if (error || !game) {
-      return NextResponse.json({ status: 'already_ended' });
+      // 游戏已结束但 game_state 可能还卡在 ending（比如服务器重启后）
+      // 修复 game_state 使前端能正常跳到 ended
+      await supabaseAdmin.from('game_state').update({
+        status: 'ended',
+        updated_at: new Date().toISOString(),
+      }).eq('id', 'current').eq('status', 'ending');
+
+      const { data: freshState } = await supabaseAdmin
+        .from('game_state').select('*').eq('id', 'current').single();
+
+      return NextResponse.json({
+        status: 'already_ended',
+        gameState: freshState ? mapGameStateRow(freshState) : undefined,
+      });
     }
 
     // 获取所有英雄
@@ -156,46 +174,107 @@ export async function POST(request: NextRequest) {
       }, { onConflict: 'hero_id' });
     }
 
-    // === P2: 押注结算（排名倍率制）===
-    // 声望前3名获得对应排名的倍率奖励
-    const top3HeroIds = new Map<string, number>(); // heroId → rank (1/2/3)
-    for (let i = 0; i < Math.min(3, repSorted.length); i++) {
-      top3HeroIds.set(repSorted[i].hero_id, i + 1);
-    }
+    // === 统一奖池制结算 ===
+    // 奖池 = intro下注总额 + 神器购买总额
+    // 只有给冠军买了神器的观众按比例分红
 
+    // 1. 将所有 bets 标记为已结算（钱已入奖池，不再单独派奖）
     const { data: allBets } = await supabaseAdmin
       .from('bets')
       .select('*')
       .eq('game_id', gameId)
       .eq('settled', false);
 
-    if (allBets && allBets.length > 0) {
-      for (const bet of allBets) {
-        const rank = top3HeroIds.get(bet.hero_id);
-        const multiplier = rank ? (BET_RANK_PAYOUTS[rank] ?? 0) : 0;
-        const payout = multiplier > 0 ? Math.floor(bet.amount * multiplier) : 0;
-        await supabaseAdmin.from('bets').update({
-          settled: true,
-          payout,
-        }).eq('id', bet.id);
+    const betTotal = (allBets || []).reduce((s: number, b: any) => s + (b.amount || 0), 0);
 
-        // 登录用户赢注：将 payout 加回余额（NPC 不得钱）
-        if (payout > 0) {
-          const { data: betHero } = await supabaseAdmin
-            .from('heroes')
-            .select('id, balance, is_npc')
-            .eq('id', bet.audience_id)
-            .single();
-          if (betHero && !betHero.is_npc) {
-            await supabaseAdmin.from('heroes').update({
-              balance: (betHero.balance ?? 10000) + payout,
-            }).eq('id', betHero.id);
-          }
+    if (allBets && allBets.length > 0) {
+      await supabaseAdmin.from('bets').update({ settled: true, payout: 0 }).eq('game_id', gameId).eq('settled', false);
+    }
+
+    // 2. 查询所有神器赠送
+    const { data: allGifts } = await supabaseAdmin
+      .from('artifact_gifts')
+      .select('*')
+      .eq('game_id', gameId)
+      .eq('settled', false);
+
+    const giftTotal = (allGifts || []).reduce((s: number, g: any) => s + (g.amount || 0), 0);
+    const totalPrizePool = betTotal + giftTotal;
+
+    // 3. 只有给冠军买了神器的观众分红
+    const championHeroId = game.champion_hero_id;
+    const winnerGifts = (allGifts || []).filter((g: any) => g.hero_id === championHeroId);
+    const winnerTotal = winnerGifts.reduce((s: number, g: any) => s + (g.amount || 0), 0);
+
+    // 构建 artifact_id → multiplier 映射
+    const artifactMap = new Map(ARTIFACTS.map(a => [a.id, a]));
+
+    for (const gift of winnerGifts) {
+      const artifactDef = artifactMap.get(gift.artifact_id);
+      const multiplier = artifactDef?.multiplier ?? 2.0;
+      const payout = Math.floor(gift.amount * multiplier);
+      await supabaseAdmin.from('artifact_gifts').update({
+        settled: true,
+        payout,
+      }).eq('id', gift.id);
+
+      // 发放奖金给登录用户
+      if (payout > 0) {
+        const { data: giftHero } = await supabaseAdmin
+          .from('heroes')
+          .select('id, balance, is_npc')
+          .eq('id', gift.audience_id)
+          .single();
+        if (giftHero && !giftHero.is_npc) {
+          await supabaseAdmin.from('heroes').update({
+            balance: (giftHero.balance ?? 10000) + payout,
+          }).eq('id', giftHero.id);
         }
       }
     }
 
-    // 写入称号事件
+    // 标记未中奖的神器赠送为已结算
+    const loserGifts = (allGifts || []).filter((g: any) => g.hero_id !== championHeroId);
+    if (loserGifts.length > 0) {
+      const loserIds = loserGifts.map((g: any) => g.id);
+      await supabaseAdmin.from('artifact_gifts').update({ settled: true, payout: 0 }).in('id', loserIds);
+    }
+
+    // 写入称号事件 — 武侠风叙事
+    const titleNarrativeTemplates: Record<string, string[]> = {
+      '武林盟主': [
+        '{name} 一战定乾坤，傲立群雄之巅，受封「武林盟主」！自此号令天下，莫敢不从！',
+        '天下英雄尽折腰！{name} 登临绝顶，加冕「武林盟主」！一代传奇，由此而始！',
+        '{name} 横扫千军如卷席，当之无愧的「武林盟主」！江湖百年，难出其右！',
+      ],
+      '绝世高手': [
+        '{name} 武功卓绝，虽差一步登顶，亦为当世罕见的「绝世高手」！江湖中人无不敬仰。',
+        '虽未折桂，{name} 一身武艺已足以傲视群雄，获封「绝世高手」！来日再战，鹿死谁手犹未可知。',
+        '{name} 实力深不可测，获封「绝世高手」！他日重来，必有一番风云！',
+      ],
+      '热搜体质': [
+        '{name} 一举一动皆为焦点，获封「热搜体质」！江湖茶馆无人不谈其名，街头巷尾皆是传说。',
+        '行走的话题中心！{name} 获封「热搜体质」！只要有ta在，江湖就不缺故事。',
+      ],
+      '嘴强王者': [
+        '{name} 口若悬河、舌灿莲花，获封「嘴强王者」！三寸不烂之舌，胜过百万雄兵。',
+        '不战而屈人之兵！{name} 凭一张利嘴获封「嘴强王者」！武功第几不好说，嘴上绝对天下第一。',
+      ],
+      '江湖豪杰': [
+        '{name} 虽未折桂，但江湖路远，今日留名「江湖豪杰」，他日必有再会之期。',
+        '{name} 行走江湖不留遗憾，获封「江湖豪杰」！好汉不提当年勇，来日方长。',
+      ],
+    };
+
+    const getTitleNarrative = (heroName: string, title: string, icon: string, points: number): string => {
+      const templates = titleNarrativeTemplates[title];
+      if (templates) {
+        const tpl = templates[Math.floor(Math.random() * templates.length)];
+        return `${icon} ${tpl.replace(/\{name\}/g, heroName)}（+${points}积分）`;
+      }
+      return `${icon} ${heroName} 获封「${title}」！+${points}积分`;
+    };
+
     const titleEvents = titleAwards.map((award, i) => ({
       game_id: gameId,
       round: 8,
@@ -203,12 +282,44 @@ export async function POST(request: NextRequest) {
       event_type: 'title_award',
       priority: 5,
       hero_id: award.heroId,
-      narrative: `${award.icon} ${award.heroName} 获封「${award.title}」！+${award.points}积分`,
+      narrative: getTitleNarrative(award.heroName, award.title, award.icon, award.points),
       data: { title: award.title, points: award.points },
     }));
 
     if (titleEvents.length > 0) {
       await supabaseAdmin.from('game_events').insert(titleEvents);
+    }
+
+    // === heroNameMap (used by multiple sections below) ===
+    const heroNameMap = new Map(gameHeroes.map((gh: any) => [gh.hero_id, gh.hero?.hero_name || '无名']));
+
+    // === 计算武林周刊统计 ===
+    const { data: allGameEvents } = await supabaseAdmin
+      .from('game_events')
+      .select('*')
+      .eq('game_id', gameId)
+      .order('round')
+      .order('sequence');
+
+    const battleStats = computeBattleStats(allGameEvents || [], heroNameMap);
+
+    // Fill in bestSurvivor (highest HP among non-eliminated)
+    const survivors = gameHeroes
+      .filter((gh: any) => !gh.is_eliminated)
+      .sort((a: any, b: any) => (b.hp || 0) - (a.hp || 0));
+    if (survivors.length > 0) {
+      battleStats.bestSurvivor = {
+        heroName: heroNameMap.get(survivors[0].hero_id) || '无名',
+        remainingHp: survivors[0].hp || 0,
+      };
+    }
+
+    // Fill in mostPopular (highest hot)
+    if (hotSorted.length > 0) {
+      battleStats.mostPopular = {
+        heroName: heroNameMap.get(hotSorted[0].hero_id) || '无名',
+        hotValue: hotSorted[0].hot || 0,
+      };
     }
 
     // === 构建上局回顾数据 ===
@@ -230,8 +341,6 @@ export async function POST(request: NextRequest) {
       .in('event_type', ['director_event', 'scramble', 'speech', 'betray', 'ally_formed', 'comeback', 'hot_news', 'eliminated', 'champion'])
       .order('round')
       .order('priority', { ascending: false });
-
-    const heroNameMap = new Map(gameHeroes.map((gh: any) => [gh.hero_id, gh.hero?.hero_name || '无名']));
 
     // 每回合最多取2条，总共不超过10条，确保覆盖多个回合
     const pickedByRound = new Map<number, number>();
@@ -257,25 +366,32 @@ export async function POST(request: NextRequest) {
       priority: e.priority,
     }));
 
-    // === 收集押注赢家（用于结局展示）===
-    const betWinners: { displayName: string; betHeroName: string; amount: number; payout: number; rank: number }[] = [];
-    if (allBets && allBets.length > 0) {
-      for (const bet of allBets) {
-        const rank = top3HeroIds.get(bet.hero_id);
-        if (!rank || bet.payout <= 0) continue;
-        // 尝试查找英雄名（登录用户 audience_id = hero_id）
-        const { data: bettor } = await supabaseAdmin
+    // === 收集神器赢家（用于结局展示）===
+    const betWinners: { displayName: string; betHeroName: string; amount: number; payout: number; rank: number; multiplier?: number }[] = [];
+    // 重新查询已结算的获奖神器
+    const { data: settledWinnerGifts } = await supabaseAdmin
+      .from('artifact_gifts')
+      .select('*')
+      .eq('game_id', gameId)
+      .eq('settled', true)
+      .gt('payout', 0);
+
+    if (settledWinnerGifts && settledWinnerGifts.length > 0) {
+      for (const gift of settledWinnerGifts) {
+        const { data: gifter } = await supabaseAdmin
           .from('heroes')
           .select('hero_name, is_npc')
-          .eq('id', bet.audience_id)
+          .eq('id', gift.audience_id)
           .single();
-        const betHeroName = heroNameMap.get(bet.hero_id) || '未知';
+        const betHeroName = heroNameMap.get(gift.hero_id) || '未知';
+        const artDef = artifactMap.get(gift.artifact_id);
         betWinners.push({
-          displayName: bettor ? bettor.hero_name : bet.audience_id.slice(0, 8),
+          displayName: gifter ? gifter.hero_name : gift.audience_id.slice(0, 8),
           betHeroName,
-          amount: bet.amount,
-          payout: bet.payout,
-          rank,
+          amount: gift.amount,
+          payout: gift.payout,
+          rank: 1, // 冠军方
+          multiplier: artDef?.multiplier,
         });
       }
     }
@@ -312,11 +428,13 @@ export async function POST(request: NextRequest) {
       phase: 'ending',
       champion_name: championGh?.hero?.hero_name || '无人',
       recent_events: titleEvents,
+      danmaku: [],
       season_leaderboard: leaderboard || [],
       last_game_top8: lastGameTop8,
       last_game_highlights: lastGameHighlights,
       bet_winners: betWinners,
       balance_ranking: balanceRanking,
+      battle_stats: battleStats,
       updated_at: new Date().toISOString(),
     });
 

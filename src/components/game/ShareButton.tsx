@@ -16,7 +16,6 @@ export function ShareButton() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback for older browsers
       const ta = document.createElement('textarea');
       ta.value = report;
       document.body.appendChild(ta);
@@ -31,7 +30,11 @@ export function ShareButton() {
   return (
     <button
       onClick={handleShare}
-      className="btn-gold text-sm px-6 py-2 inline-flex items-center gap-2"
+      className={`text-sm px-5 py-2 rounded-lg font-bold inline-flex items-center gap-2 transition ${
+        copied
+          ? 'bg-jade/15 text-jade border border-jade/30'
+          : 'btn-ghost hover:border-gold/40 hover:text-gold'
+      }`}
     >
       {copied ? '✅ 已复制战报' : '📋 分享战报'}
     </button>

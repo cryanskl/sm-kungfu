@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { cookies } from 'next/headers';
 import { getHeroIdFromCookies } from '@/lib/auth';
 import { BET_AMOUNTS } from '@/lib/game/constants';
+import { betRateLimiter } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,6 +26,13 @@ export async function POST(request: NextRequest) {
     } else {
       const cookieStore = await cookies();
       audienceId = cookieStore.get('wulin_audience_id')?.value || crypto.randomUUID();
+    }
+
+    // 限流检查
+    const rl = betRateLimiter.check(audienceId);
+    if (!rl.allowed) {
+      const wait = Math.ceil((rl.retryAfterMs || 0) / 1000);
+      return NextResponse.json({ error: `少侠手速太快，${wait}秒后再试` }, { status: 429 });
     }
 
     // 获取当前游戏状态
@@ -63,6 +71,7 @@ export async function POST(request: NextRequest) {
         .rpc('deduct_balance', { p_hero_id: loggedInHeroId, p_amount: amount });
 
       if (deductErr || deducted === null || deducted === undefined) {
+        console.error('deduct_balance RPC failed:', { deductErr, deducted, loggedInHeroId, amount });
         // rpc 返回 -1 表示余额不足
         if (deducted === -1) {
           return NextResponse.json({ error: '银两不足' }, { status: 400 });

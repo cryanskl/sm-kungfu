@@ -25,6 +25,9 @@ export function mapGameStateRow(data: any): GameState {
     lastGameHighlights: data.last_game_highlights || [],
     betWinners: data.bet_winners || [],
     balanceRanking: data.balance_ranking || [],
+    battleStats: data.battle_stats || undefined,
+    artifactPool: data.artifact_pool || null,
+    audienceInfluence: data.audience_influence || null,
     queueCount: data.queue_count || 0,
     updatedAt: data.updated_at,
   };

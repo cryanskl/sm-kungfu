@@ -5,35 +5,56 @@ import { useWulinStore } from '@/stores/gameStore';
 import { DanmakuItem } from '@/lib/types';
 
 interface FloatingDanmaku extends DanmakuItem {
-  top: number;   // % from top
-  key: string;    // unique render key
+  top: number;
+  key: string;
+  isCommentary?: boolean;
 }
 
 const COLOR_MAP: Record<string, string> = {
   white: '#e8e0d0',
-  gold: '#d4a843',
+  gold: '#c9a84c',
   cyan: '#5dade2',
+  red: '#e74c3c',
 };
 
 export function DanmakuOverlay() {
   const gameState = useWulinStore(s => s.gameState);
   const localDanmaku = useWulinStore(s => s.localDanmaku);
+  const clearLocalDanmaku = useWulinStore(s => s.clearLocalDanmaku);
   const [floating, setFloating] = useState<FloatingDanmaku[]>([]);
   const seenIds = useRef(new Set<string>());
   const prevGameIdRef = useRef<string | null>(null);
 
-  // 新比赛清空弹幕
+  // 换局时清空
   useEffect(() => {
     const gid = gameState?.gameId ?? null;
     if (prevGameIdRef.current && gid !== prevGameIdRef.current) {
       seenIds.current.clear();
       setFloating([]);
+      clearLocalDanmaku();
     }
     prevGameIdRef.current = gid;
-  }, [gameState?.gameId]);
+  }, [gameState?.gameId, clearLocalDanmaku]);
 
-  // Merge server danmaku + local danmaku, deduplicate
+  // ended / waiting / countdown 时清空残留弹幕
+  const prevStatusRef = useRef<string | null>(null);
   useEffect(() => {
+    const status = gameState?.status ?? null;
+    if (status !== prevStatusRef.current) {
+      if (status === 'ended' || status === 'ending' || status === 'waiting' || status === 'artifact_selection') {
+        seenIds.current.clear();
+        setFloating([]);
+        clearLocalDanmaku();
+      }
+      prevStatusRef.current = status;
+    }
+  }, [gameState?.status, clearLocalDanmaku]);
+
+  // 神兵助战阶段不显示弹幕
+  const suppressDanmaku = gameState?.status === 'artifact_selection';
+
+  useEffect(() => {
+    if (suppressDanmaku) return;
     const serverItems = gameState?.danmaku || [];
     const allItems = [...serverItems, ...localDanmaku];
 
@@ -43,7 +64,7 @@ export function DanmakuOverlay() {
         seenIds.current.add(item.id);
         newItems.push({
           ...item,
-          top: 5 + Math.random() * 60, // 5%-65% from top
+          top: 5 + Math.random() * 60,
           key: item.id,
         });
       }
@@ -52,9 +73,8 @@ export function DanmakuOverlay() {
     if (newItems.length > 0) {
       setFloating(prev => [...prev, ...newItems]);
     }
-  }, [gameState?.danmaku, localDanmaku]);
+  }, [gameState?.danmaku, localDanmaku, suppressDanmaku]);
 
-  // Auto-remove after animation (9s)
   useEffect(() => {
     if (floating.length === 0) return;
     const timer = setTimeout(() => {
@@ -63,7 +83,6 @@ export function DanmakuOverlay() {
     return () => clearTimeout(timer);
   }, [floating.length]);
 
-  // Clean seen IDs periodically
   useEffect(() => {
     const interval = setInterval(() => {
       if (seenIds.current.size > 200) {
@@ -77,20 +96,29 @@ export function DanmakuOverlay() {
 
   return (
     <div className="fixed inset-0 z-20 pointer-events-none overflow-hidden">
-      {floating.map(item => (
-        <div
-          key={item.key}
-          className="absolute whitespace-nowrap text-lg font-bold danmaku-scroll"
-          style={{
-            top: `${item.top}%`,
-            color: COLOR_MAP[item.color] || COLOR_MAP.white,
-            textShadow: '1px 1px 3px rgba(0,0,0,0.8), 0 0 10px rgba(0,0,0,0.5)',
-            animation: 'danmakuScroll 8s linear forwards',
-          }}
-        >
-          {item.wuxiaText}
-        </div>
-      ))}
+      {floating.map(item => {
+        const isC = item.isCommentary;
+        const color = COLOR_MAP[item.color] || COLOR_MAP.white;
+        return (
+          <div
+            key={item.key}
+            className={`absolute whitespace-nowrap font-bold ${
+              isC ? 'text-lg bg-ink-dark/60 px-2 py-0.5 rounded border border-gold/30' : 'text-base'
+            }`}
+            style={{
+              top: `${item.top}%`,
+              color,
+              textShadow: isC
+                ? `1px 1px 4px rgba(0,0,0,0.9), 0 0 16px ${color}40`
+                : '1px 1px 4px rgba(0,0,0,0.9), 0 0 12px rgba(0,0,0,0.5)',
+              animation: 'danmakuScroll 8s linear forwards',
+              letterSpacing: '0.02em',
+            }}
+          >
+            {item.wuxiaText}
+          </div>
+        );
+      })}
     </div>
   );
 }

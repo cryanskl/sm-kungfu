@@ -54,3 +54,18 @@ export function getHeroIdFromCookies(cookies: { get: (name: string) => { value: 
   const heroId = verifyCookie(cookies.get('wulin_hero_id')?.value);
   return { userId, heroId };
 }
+
+// ============================================================
+// Engine API 鉴权：要求已登录（有合法 heroId cookie）
+// ============================================================
+
+export async function requireSession(): Promise<import('next/server').NextResponse | null> {
+  const { cookies } = await import('next/headers');
+  const cookieStore = await cookies();
+  const { heroId } = getHeroIdFromCookies(cookieStore);
+  if (!heroId) {
+    const { NextResponse } = await import('next/server');
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  return null;
+}

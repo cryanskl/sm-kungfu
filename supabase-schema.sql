@@ -230,6 +230,44 @@ BEGIN
 END;
 $$;
 
+-- === 神兵助战：神器赠送表 ===
+CREATE TABLE IF NOT EXISTS artifact_gifts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  game_id UUID REFERENCES games(id) ON DELETE CASCADE,
+  audience_id TEXT NOT NULL,
+  hero_id UUID NOT NULL,
+  artifact_id TEXT NOT NULL,
+  amount INT NOT NULL DEFAULT 0,
+  payout INT DEFAULT 0,
+  settled BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_gifts_unique ON artifact_gifts(game_id, audience_id);
+CREATE INDEX IF NOT EXISTS idx_artifact_gifts_game_hero ON artifact_gifts(game_id, hero_id);
+
+-- === 神兵助战：game_state 新增 artifact_pool 列 ===
+ALTER TABLE game_state ADD COLUMN IF NOT EXISTS artifact_pool JSONB DEFAULT '{}';
+
+-- === 弹幕天意：观众影响力 ===
+ALTER TABLE game_state ADD COLUMN IF NOT EXISTS audience_influence JSONB DEFAULT '{}';
+
+-- === RLS：封堵 anon key 直连漏洞 ===
+-- 所有表启用 RLS，不加 Policy。supabaseAdmin（service role）自动绕过 RLS。
+ALTER TABLE heroes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE games ENABLE ROW LEVEL SECURITY;
+ALTER TABLE game_heroes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE game_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE game_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE season_leaderboard ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE danmaku ENABLE ROW LEVEL SECURITY;
+ALTER TABLE game_queue ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activity_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE artifact_gifts ENABLE ROW LEVEL SECURITY;
+
+-- === 封神榜：英雄背景故事 ===
+ALTER TABLE heroes ADD COLUMN IF NOT EXISTS backstory TEXT;
+
 -- 初始化 game_state
 INSERT INTO game_state (id, status, phase) VALUES ('current', 'waiting', 'waiting')
 ON CONFLICT (id) DO NOTHING;

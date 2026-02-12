@@ -14,6 +14,12 @@ interface AudienceBet {
   amount: number;
 }
 
+interface AudienceArtifact {
+  artifactId: string;
+  heroId: string;
+  amount: number;
+}
+
 interface WulinStore {
   // 用户
   user: UserState;
@@ -25,7 +31,7 @@ interface WulinStore {
 
   // 轮询
   isPolling: boolean;
-  startPolling: () => void;
+  startPolling: () => Promise<void>;
   stopPolling: () => void;
   pollNow: () => Promise<void>;
 
@@ -42,10 +48,16 @@ interface WulinStore {
   // P2: 弹幕（本地即时显示）
   localDanmaku: DanmakuItem[];
   addLocalDanmaku: (item: DanmakuItem) => void;
+  addCommentaryDanmaku: (item: DanmakuItem) => void;
+  lastCommentaryTime: number;
   clearLocalDanmaku: () => void;
   // P2: 音效
   isMuted: boolean;
   toggleMute: () => void;
+  // 神兵助战
+  audienceArtifact: AudienceArtifact | null;
+  setAudienceArtifact: (artifact: AudienceArtifact) => void;
+  clearAudienceArtifact: () => void;
 }
 
 export const useWulinStore = create<WulinStore>((set, get) => ({
@@ -59,10 +71,20 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
 
   // 轮询
   isPolling: false,
-  startPolling: () => {
+  startPolling: async () => {
     if (get().isPolling) return;
     set({ isPolling: true });
 
+    // 首次立即拉取并等待结果，消除白屏
+    try {
+      const res = await fetch('/api/game/state');
+      if (res.ok) {
+        const data = await res.json();
+        set({ gameState: data });
+      }
+    } catch { /* ignore */ }
+
+    // 后续 3s 间隔轮询
     const poll = async () => {
       if (!get().isPolling) return;
       try {
@@ -77,7 +99,7 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
         setTimeout(poll, 3000);
       }
     };
-    poll();
+    setTimeout(poll, 3000);
   },
   stopPolling: () => set({ isPolling: false }),
   pollNow: async () => {
@@ -105,6 +127,16 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
   addLocalDanmaku: (item) => set((s) => ({
     localDanmaku: [...s.localDanmaku.slice(-49), item],
   })),
+  addCommentaryDanmaku: (item) => {
+    const now = Date.now();
+    const state = get();
+    if (now - state.lastCommentaryTime < 200) return; // 200ms rate limit
+    set({
+      localDanmaku: [...state.localDanmaku.slice(-49), item],
+      lastCommentaryTime: now,
+    });
+  },
+  lastCommentaryTime: 0,
   clearLocalDanmaku: () => set({ localDanmaku: [] }),
   // P2: 音效
   isMuted: typeof window !== 'undefined' ? localStorage.getItem('wulin_muted') === '1' : false,
@@ -113,4 +145,8 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
     if (typeof window !== 'undefined') localStorage.setItem('wulin_muted', next ? '1' : '0');
     return { isMuted: next };
   }),
+  // 神兵助战
+  audienceArtifact: null,
+  setAudienceArtifact: (artifact) => set({ audienceArtifact: artifact }),
+  clearAudienceArtifact: () => set({ audienceArtifact: null }),
 }));

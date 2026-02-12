@@ -4,18 +4,21 @@ import { resolveFinalsRound } from '@/lib/game/combat';
 import { finalsPrompt } from '@/lib/game/prompts';
 import { SecondMeClient } from '@/lib/game/secondme-client';
 import { NPC_TEMPLATES } from '@/lib/game/npc-data/templates';
-import { FINALS_TOP_REPUTATION, FINALS_TOP_HOT, FINALS_ROUNDS } from '@/lib/game/constants';
-import { FinalsMove, GameEvent } from '@/lib/types';
+import { FINALS_TOP_REPUTATION, FINALS_TOP_HOT, FINALS_ROUNDS, INITIAL_HP, ARTIFACTS, ARTIFACT_POOL_SIZE } from '@/lib/game/constants';
+import { FinalsMove, GameEvent, ArtifactDef } from '@/lib/types';
 import { mapGameStateRow } from '@/lib/game/state-mapper';
 import {
   getMoveName, getInnerThought, getReadyNarrative,
   getClashNarrative, getWinTaunt, getLoseReaction,
 } from '@/lib/game/finals-narrative';
+import { requireSession } from '@/lib/auth';
 
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {
+    const authError = await requireSession();
+    if (authError) return authError;
     const { gameId } = await request.json();
     if (!gameId) return NextResponse.json({ error: 'Missing gameId' }, { status: 400 });
 
@@ -248,154 +251,50 @@ export async function POST(request: NextRequest) {
       await supabaseAdmin.from('game_heroes').update({ hp: h2Hp }).eq('id', hero2gh.id);
     }
 
-    // === 决赛 ===
+    // === 半决赛后：进入神兵助战阶段（或直接结束）===
     if (winners.length >= 2) {
-      const [f1gh, f2gh] = winners;
-      const f1 = f1gh.hero;
-      const f2 = f2gh.hero;
-      let f1Hp = f1gh.hp;
-      let f2Hp = f2gh.hp;
+      // 随机选8个神器
+      const shuffled = [...ARTIFACTS].sort(() => Math.random() - 0.5);
+      const selectedArtifacts = shuffled.slice(0, ARTIFACT_POOL_SIZE);
+
+      // 查询 intro 下注总额
+      const { data: betSum } = await supabaseAdmin
+        .from('bets')
+        .select('amount')
+        .eq('game_id', gameId);
+      const introBetTotal = (betSum || []).reduce((s: number, b: any) => s + (b.amount || 0), 0);
+
+      // 构建 artifactPool
+      const artifactPool = {
+        finalists: winners.map((w: any) => ({
+          heroId: w.hero_id,
+          heroName: w.hero.hero_name,
+          totalValue: 0,
+          giftCount: 0,
+          artifacts: [],
+        })),
+        availableArtifacts: selectedArtifacts,
+        totalPrizePool: introBetTotal,
+        introBetTotal,
+        isOpen: true,
+      };
 
       events.push({
         eventType: 'director_event',
         priority: 8,
-        narrative: `🏆 终极决战！${f1.hero_name}（HP:${f1Hp}）vs ${f2.hero_name}（HP:${f2Hp}）！谁将成为武林盟主？！`,
-        data: { phase: 'final' },
+        narrative: `⚔️ 决赛双雄已出！${winners[0].hero.hero_name} vs ${winners[1].hero.hero_name}！观众可赠送神兵助战！`,
+        data: { phase: 'artifact_selection', finalistIds: winners.map((w: any) => w.hero_id) },
       } as any);
 
-      for (let r = 1; r <= FINALS_ROUNDS; r++) {
-        const [res1, res2] = await Promise.all([
-          getFinalsMove(f1gh, f2.hero_name),
-          getFinalsMove(f2gh, f1.hero_name),
-        ]);
-
-        const move1 = res1.move;
-        const move2 = res2.move;
-        const moveName1 = getMoveName(f1.npc_template_id, f1.faction, move1);
-        const moveName2 = getMoveName(f2.npc_template_id, f2.faction, move2);
-
-        const result = resolveFinalsRound({
-          move1, move2,
-          hero1Attrs: { strength: f1.strength, wisdom: f1.wisdom, innerForce: f1.inner_force },
-          hero2Attrs: { strength: f2.strength, wisdom: f2.wisdom, innerForce: f2.inner_force },
-          hero1Credit: f1gh.credit || 50,
-          hero2Credit: f2gh.credit || 50,
-        });
-
-        f1Hp = Math.max(0, f1Hp + result.hero1HpDelta);
-        f2Hp = Math.max(0, f2Hp + result.hero2HpDelta);
-
-        // --- Event 1: Fighter 1 readies ---
-        events.push({
-          eventType: 'fight',
-          priority: 6,
-          heroId: f1gh.hero_id,
-          narrative: `🏆 ${getReadyNarrative(f1.hero_name, moveName1, move1)}`,
-          innerThought: getInnerThought(f1.npc_template_id, f1.personality_type),
-          taunt: res1.taunt,
-          data: { phase: 'final', round: r, move: move1 },
-        } as any);
-
-        // --- Event 2: Fighter 2 readies ---
-        events.push({
-          eventType: 'fight',
-          priority: 6,
-          heroId: f2gh.hero_id,
-          narrative: `🏆 ${getReadyNarrative(f2.hero_name, moveName2, move2)}`,
-          innerThought: getInnerThought(f2.npc_template_id, f2.personality_type),
-          taunt: res2.taunt,
-          data: { phase: 'final', round: r, move: move2 },
-        } as any);
-
-        // --- Event 3: Clash ---
-        const clashText = `🏆 决赛第${r}招！` + getClashNarrative(
-          f1.hero_name, f2.hero_name,
-          moveName1, moveName2, move1, move2, result.result,
-        );
-
-        if (result.hero1HpDelta < 0 && result.hero2HpDelta < 0) {
-          events.push({
-            eventType: 'fight', priority: 8,
-            heroId: f1gh.hero_id,
-            targetHeroId: f2gh.hero_id,
-            narrative: clashText,
-            hpDelta: result.hero2HpDelta,
-            data: { round: r, move1, move2, result: result.result, f1Hp, f2Hp },
-          } as any);
-          events.push({
-            eventType: 'fight', priority: 6,
-            heroId: f2gh.hero_id,
-            targetHeroId: f1gh.hero_id,
-            narrative: `${f1.hero_name}也被反震之力波及！`,
-            hpDelta: result.hero1HpDelta,
-            data: { round: r, aftershock: true },
-          } as any);
-        } else if (result.hero2HpDelta < 0) {
-          events.push({
-            eventType: 'fight', priority: 8,
-            heroId: f1gh.hero_id,
-            targetHeroId: f2gh.hero_id,
-            narrative: clashText,
-            taunt: getWinTaunt(f1.npc_template_id),
-            hpDelta: result.hero2HpDelta,
-            data: { round: r, move1, move2, result: result.result, f1Hp, f2Hp },
-          } as any);
-        } else if (result.hero1HpDelta < 0) {
-          events.push({
-            eventType: 'fight', priority: 8,
-            heroId: f2gh.hero_id,
-            targetHeroId: f1gh.hero_id,
-            narrative: clashText,
-            taunt: getWinTaunt(f2.npc_template_id),
-            hpDelta: result.hero1HpDelta,
-            data: { round: r, move1, move2, result: result.result, f1Hp, f2Hp },
-          } as any);
-        } else {
-          events.push({
-            eventType: 'fight', priority: 7,
-            heroId: f1gh.hero_id,
-            targetHeroId: f2gh.hero_id,
-            narrative: clashText,
-            data: { round: r, move1, move2, result: result.result, f1Hp, f2Hp },
-          } as any);
-        }
-
-        if (f1Hp <= 0 || f2Hp <= 0) break;
-      }
-
-      // 判定盟主
-      let champion, runnerUp;
-      if (f1Hp > f2Hp) {
-        champion = f1gh; runnerUp = f2gh;
-      } else if (f2Hp > f1Hp) {
-        champion = f2gh; runnerUp = f1gh;
-      } else {
-        champion = (f1gh.reputation || 0) >= (f2gh.reputation || 0) ? f1gh : f2gh;
-        runnerUp = champion === f1gh ? f2gh : f1gh;
-      }
-
-      events.push({
-        eventType: 'champion',
-        priority: 8,
-        heroId: champion.hero_id,
-        narrative: `🏆🏆🏆 ${champion.hero.hero_name} 击败 ${runnerUp.hero.hero_name}，荣登武林盟主！天下第一！`,
-        taunt: getWinTaunt(champion.hero.npc_template_id),
-        innerThought: getLoseReaction(runnerUp.hero.npc_template_id),
-        data: { championHeroId: champion.hero_id, runnerUpHeroId: runnerUp.hero_id },
-      } as any);
-
-      await supabaseAdmin.from('games').update({
-        status: 'ending',
-        champion_hero_id: champion.hero_id,
-      }).eq('id', gameId);
+      await supabaseAdmin.from('games').update({ status: 'artifact_selection' }).eq('id', gameId);
 
       await supabaseAdmin.from('game_state').upsert({
         id: 'current',
         game_id: gameId,
-        status: 'ending',
-        phase: 'ending',
-        champion_name: champion.hero.hero_name,
+        status: 'artifact_selection',
+        phase: 'artifact_selection',
         recent_events: events,
+        artifact_pool: artifactPool,
         updated_at: new Date().toISOString(),
       });
     } else if (winners.length === 1) {
@@ -479,7 +378,7 @@ async function getFinalsMove(gh: any, opponentName: string): Promise<{ move: Fin
       faction: hero.faction,
       personalityType: hero.personality_type,
       hp: gh.hp,
-      maxHp: 100,
+      maxHp: INITIAL_HP,
       seatNumber: gh.seat_number,
       reputation: gh.reputation || 0,
       hot: gh.hot || 0,

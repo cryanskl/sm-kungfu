@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { getHeroIdFromCookies } from '@/lib/auth';
+import { INITIAL_HP } from '@/lib/game/constants';
 
 export async function POST(request: NextRequest) {
   const { userId, heroId } = getHeroIdFromCookies(request.cookies);
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
     personalityType: gh.hero?.personality_type || 'random',
     seatNumber: gh.seat_number,
     hp: gh.hp,
-    maxHp: 100,
+    maxHp: INITIAL_HP,
     reputation: 0,
     hot: 0,
     morality: gh.morality || 50,

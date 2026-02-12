@@ -1,4 +1,4 @@
-import { GameHero, MartialArt, FinalsMove } from '../types';
+import { GameHero, MartialArt, FinalsMove, ArtifactEffect } from '../types';
 import {
   MIN_DAMAGE, ULTIMATE_MULTIPLIER, DEATH_PACT_MULTIPLIER,
   GANG_UP_DEFENSE_BONUS, WANTED_DEFENSE_BONUS, WANTED_COUNTER_BONUS,
@@ -25,7 +25,7 @@ interface CombatContext {
 export function calculateAttackPower(ctx: CombatContext): number {
   const { strength, innerForce } = ctx.attackerAttrs;
   const martialBonus = ctx.attackerMartialArts.reduce((sum, ma) => sum + ma.attackBonus, 0);
-  let power = strength * 0.4 + innerForce * 0.3 + martialBonus;
+  let power = strength * 0.6 + innerForce * 0.5 + martialBonus;
 
   if (ctx.isDeathPact) power *= DEATH_PACT_MULTIPLIER;
   if (ctx.isRevenge) power *= REVENGE_DAMAGE_BONUS;
@@ -95,6 +95,8 @@ interface FinalsMatchup {
   hero2Attrs: { strength: number; wisdom: number; innerForce: number };
   hero1Credit: number;
   hero2Credit: number;
+  hero1Artifacts?: ArtifactEffect;
+  hero2Artifacts?: ArtifactEffect;
 }
 
 export type FinalsResult = 'hero1_wins' | 'hero2_wins' | 'draw' | 'both_hurt';
@@ -113,28 +115,31 @@ export function resolveFinalsRound(matchup: FinalsMatchup): {
   narrative: string;
 } {
   const { move1, move2 } = matchup;
+  const a1 = matchup.hero1Artifacts || {};
+  const a2 = matchup.hero2Artifacts || {};
 
-  // 诈的处理
+  // 诈的处理（加 bluffBoost）
   let effectiveMove1 = move1;
   let effectiveMove2 = move2;
 
   if (move1 === 'bluff') {
     const bluffChance = BLUFF_BASE_CHANCE
       + matchup.hero1Attrs.wisdom * BLUFF_WISDOM_FACTOR
-      + matchup.hero1Credit * BLUFF_CREDIT_FACTOR;
+      + matchup.hero1Credit * BLUFF_CREDIT_FACTOR
+      + (a1.bluffBoost || 0);
     if (Math.random() < bluffChance) {
-      // 诈成功：对手出了被克制的招
       const counterOf = Object.entries(BEATS).find(([, v]) => v === move2)?.[0];
       if (counterOf) effectiveMove2 = counterOf as FinalsMove;
-      effectiveMove1 = 'attack'; // 诈成功等于完美克制
+      effectiveMove1 = 'attack';
     } else {
-      effectiveMove1 = 'attack'; // 诈失败视为出攻
+      effectiveMove1 = 'attack';
     }
   }
   if (move2 === 'bluff') {
     const bluffChance = BLUFF_BASE_CHANCE
       + matchup.hero2Attrs.wisdom * BLUFF_WISDOM_FACTOR
-      + matchup.hero2Credit * BLUFF_CREDIT_FACTOR;
+      + matchup.hero2Credit * BLUFF_CREDIT_FACTOR
+      + (a2.bluffBoost || 0);
     if (Math.random() < bluffChance) {
       const counterOf = Object.entries(BEATS).find(([, v]) => v === move1)?.[0];
       if (counterOf) effectiveMove1 = counterOf as FinalsMove;
@@ -144,14 +149,21 @@ export function resolveFinalsRound(matchup: FinalsMatchup): {
     }
   }
 
+  // 伤害减免辅助函数
+  const applyReduction = (dmg: number, reduction: number) => Math.max(5, dmg - reduction);
+
   // 同招
   if (effectiveMove1 === effectiveMove2) {
     if (effectiveMove1 === 'attack') {
-      // 比力量
-      if (matchup.hero1Attrs.strength > matchup.hero2Attrs.strength) {
-        return { result: 'hero1_wins', hero1HpDelta: 0, hero2HpDelta: -15, narrative: '双方硬碰硬，力量更强者占据上风！' };
-      } else if (matchup.hero1Attrs.strength < matchup.hero2Attrs.strength) {
-        return { result: 'hero2_wins', hero1HpDelta: -15, hero2HpDelta: 0, narrative: '双方硬碰硬，力量更强者占据上风！' };
+      // 比力量（加 attackBoost）
+      const s1 = matchup.hero1Attrs.strength + (a1.attackBoost || 0);
+      const s2 = matchup.hero2Attrs.strength + (a2.attackBoost || 0);
+      if (s1 > s2) {
+        const dmg = applyReduction(15 + (a1.attackBoost || 0), a2.damageReduction || 0);
+        return { result: 'hero1_wins', hero1HpDelta: 0, hero2HpDelta: -dmg, narrative: '双方硬碰硬，力量更强者占据上风！' };
+      } else if (s1 < s2) {
+        const dmg = applyReduction(15 + (a2.attackBoost || 0), a1.damageReduction || 0);
+        return { result: 'hero2_wins', hero1HpDelta: -dmg, hero2HpDelta: 0, narrative: '双方硬碰硬，力量更强者占据上风！' };
       }
       return { result: 'draw', hero1HpDelta: -5, hero2HpDelta: -5, narrative: '势均力敌，双方各退一步！' };
     }
@@ -159,17 +171,24 @@ export function resolveFinalsRound(matchup: FinalsMatchup): {
       return { result: 'draw', hero1HpDelta: 5, hero2HpDelta: 5, narrative: '双方以守为攻，各自调息。' };
     }
     if (effectiveMove1 === 'ultimate') {
-      return { result: 'both_hurt', hero1HpDelta: -FINALS_CLASH_DAMAGE, hero2HpDelta: -FINALS_CLASH_DAMAGE, narrative: '两大绝招正面交锋！天崩地裂！双方重伤！' };
+      // 绝招对绝招（加 ultimateBoost）
+      const clash1 = Math.round(FINALS_CLASH_DAMAGE * (1 + (a1.ultimateBoost || 0)));
+      const clash2 = Math.round(FINALS_CLASH_DAMAGE * (1 + (a2.ultimateBoost || 0)));
+      const dmg1 = applyReduction(clash2, a1.damageReduction || 0);
+      const dmg2 = applyReduction(clash1, a2.damageReduction || 0);
+      return { result: 'both_hurt', hero1HpDelta: -dmg1, hero2HpDelta: -dmg2, narrative: '两大绝招正面交锋！天崩地裂！双方重伤！' };
     }
   }
 
   // 克制判定
   if (BEATS[effectiveMove1] === effectiveMove2) {
-    const damage = 20 + Math.round(matchup.hero1Attrs.innerForce * 0.3);
+    const baseDmg = 20 + Math.round(matchup.hero1Attrs.innerForce * 0.3) + (a1.attackBoost || 0);
+    const damage = applyReduction(baseDmg, a2.damageReduction || 0);
     return { result: 'hero1_wins', hero1HpDelta: 0, hero2HpDelta: -damage, narrative: `完美克制！` };
   }
   if (BEATS[effectiveMove2] === effectiveMove1) {
-    const damage = 20 + Math.round(matchup.hero2Attrs.innerForce * 0.3);
+    const baseDmg = 20 + Math.round(matchup.hero2Attrs.innerForce * 0.3) + (a2.attackBoost || 0);
+    const damage = applyReduction(baseDmg, a1.damageReduction || 0);
     return { result: 'hero2_wins', hero1HpDelta: -damage, hero2HpDelta: 0, narrative: `完美克制！` };
   }
 

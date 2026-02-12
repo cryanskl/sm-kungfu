@@ -101,6 +101,65 @@ export function finalsPrompt(self: GameHeroSnapshot, opponentName: string): stri
 只返回 JSON。`;
 }
 
+// --- 封神榜背景故事（真人玩家） ---
+export function bioPrompt(heroName: string, faction: string): string {
+  return `你是「${heroName}」，${faction}门派的侠客。
+请为自己写一段江湖背景故事（40-60字），武侠风格，介绍你的来历和特点。
+要求：第三人称，不要现代用语，体现武侠世界观。
+只返回这段背景故事，不要其他内容。`;
+}
+
+// --- 封神榜背景故事 fallback（SecondMe 生成失败时用模板兜底）---
+const FACTION_BIO_TEMPLATES: Record<string, string[]> = {
+  '少林': [
+    '{name}自幼入少林，苦修二十年，铁拳铜臂，寺中武僧皆敬其三分。虽沉默寡言，出手必惊四座。',
+    '{name}本是少林弃婴，由方丈亲自抚养长大。天赋异禀，三年便悟透罗汉拳精髓，江湖皆传其名。',
+    '{name}曾是少林藏经阁杂役，无人知其来历。一朝出世，武功深不可测，令群豪侧目。',
+  ],
+  '武当': [
+    '{name}少年时偶入武当山，得真人传授太极心法。性情淡然如水，出剑却快如惊雷。',
+    '{name}武当山修道十载，悟得阴阳之理。下山之日，真人赠其古剑一柄，嘱其匡扶正义。',
+    '{name}本是世家子弟，因厌倦纷争遁入武当。太极剑法初成，便有行走江湖之念。',
+  ],
+  '峨眉': [
+    '{name}峨眉金顶长大，师承峨眉绝学。外柔内刚，一手峨眉刺法出神入化，江湖少有敌手。',
+    '{name}自幼随师在峨眉修行，性格刚烈果决。虽年纪尚轻，剑术已入化境，不容小觑。',
+    '{name}峨眉弟子中的异类，不拘礼法，独创一路奇诡剑法。师门长辈对其又爱又恨。',
+  ],
+  '华山': [
+    '{name}华山论剑中崭露头角的新秀，剑法凌厉，招招致命。虽年少轻狂，实力不容小觑。',
+    '{name}华山派剑气二宗之争中脱颖而出，独辟蹊径，自创一路剑意。人称"华山怪才"。',
+    '{name}自幼在华山绝壁上练剑，以飞鸟为师。其剑法轻灵飘逸，如行云流水，不落痕迹。',
+  ],
+  '逍遥': [
+    '{name}逍遥派传人，精通奇门遁甲之术。行事飘忽不定，江湖中人难窥其真面目。',
+    '{name}师承逍遥，学贯百家。琴棋书画无一不精，武功更是深藏不露，文武双全。',
+    '{name}逍遥门下最年轻的弟子，天资聪颖。虽入门日浅，悟性却远超同辈。',
+  ],
+  '大理': [
+    '{name}大理段氏旁支，虽不习六脉神剑，却自悟一身独特内力。为人洒脱，行侠仗义。',
+    '{name}出身大理皇族，不恋荣华富贵，偏要闯荡江湖。一身段氏剑法，尽显皇家风范。',
+    '{name}大理天龙寺俗家弟子，习得一阳指三成功力。下山历练，誓要在武林闯出名堂。',
+  ],
+  '魔教': [
+    '{name}魔教中特立独行之辈，不服教规，只信拳头。虽被正道不齿，却有自己的江湖道义。',
+    '{name}少年时被魔教收养，习得一身诡异武功。亦正亦邪，江湖中人对其褒贬不一。',
+    '{name}魔教新一代翘楚，武功路数阴狠凌厉。虽名为魔教中人，行事自有章法。',
+  ],
+};
+
+const GENERIC_BIO_TEMPLATES = [
+  '{name}出身{faction}，性情独特。初出茅庐便敢闯武林大会，胆识过人，前途不可限量。',
+  '{name}行走江湖多年，{faction}门下弟子。为人低调却暗藏锋芒，知其深浅者寥寥无几。',
+  '{name}本是乡野少年，偶入{faction}门下，苦练成才。一朝入世，便要在武林闯出天地。',
+];
+
+export function generateFallbackBio(heroName: string, faction: string): string {
+  const templates = FACTION_BIO_TEMPLATES[faction] || GENERIC_BIO_TEMPLATES;
+  const tpl = templates[Math.floor(Math.random() * templates.length)];
+  return tpl.replace(/\{name\}/g, heroName).replace(/\{faction\}/g, faction);
+}
+
 // --- 导演事件描述 ---
 export const DIRECTOR_EVENTS: Record<number, {
   title: string;
