@@ -219,11 +219,12 @@ export async function POST(request: NextRequest) {
 
     const humanCount = humanHeroes?.filter((gh: any) => !gh.hero?.is_npc).length || 0;
 
-    if (humanCount === 1 && game.status === 'waiting') {
+    if (humanCount >= 1 && game.status === 'waiting') {
       await supabaseAdmin
         .from('games')
         .update({ status: 'countdown' })
-        .eq('id', game.id);
+        .eq('id', game.id)
+        .eq('status', 'waiting');  // optimistic lock: only update if still waiting
     }
 
     // 记录参赛活动
@@ -268,7 +269,7 @@ export async function POST(request: NextRequest) {
       charisma: gh.hero?.charisma || 10,
     })) || [];
 
-    const newStatus = humanCount === 1 && game.status === 'waiting' ? 'countdown' : game.status;
+    const newStatus = humanCount >= 1 && game.status === 'waiting' ? 'countdown' : game.status;
     await supabaseAdmin.from('game_state').upsert({
       id: 'current',
       game_id: game.id,

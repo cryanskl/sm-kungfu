@@ -110,7 +110,7 @@ export function GameHeader({
                   : 'border-gold/30 text-gold hover:bg-gold/8'
               }`}
             >
-              {isQueued ? '✅ 已排队' : '⏳ 排队等候'}
+              {isQueued ? '✅ 已候场' : '🎯 候场'}
             </button>
           )}
           {isParticipant && (status === 'waiting' || status === 'countdown') && (

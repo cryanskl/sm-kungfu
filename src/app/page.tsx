@@ -448,7 +448,7 @@ export default function Home() {
         if (data.position > 12) {
           setQueueInfo({ position: data.position, estimatedMinutes: data.estimatedMinutes });
         } else {
-          setJoinToast('比赛进行中，已排入下一局，先观战吧');
+          setJoinToast('已候场，下一局自动入座，先观战吧');
           setTimeout(() => setJoinToast(null), 5000);
         }
       } else if (res.ok) {
