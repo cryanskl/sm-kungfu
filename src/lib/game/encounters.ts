@@ -1240,9 +1240,9 @@ export function rollEncounters(
     return pool[pool.length - 1];
   }
 
-  // 随机打乱英雄顺序
+  // 随机打乱英雄顺序，允许同一英雄多次触发（count > heroNames.length 时循环分配）
   const shuffledHeroes = [...heroNames].sort(() => Math.random() - 0.5);
-  const actualCount = Math.min(count, shuffledHeroes.length);
+  const actualCount = Math.min(count, eligible.length); // 受奇遇池限制，不受英雄数限制
 
   const results: { heroName: string; encounter: Encounter }[] = [];
   const usedEncounterIds = new Set<string>();
@@ -1251,7 +1251,6 @@ export function rollEncounters(
     // 尝试选取一个未使用的奇遇
     let remainingPool = eligible.filter((e) => !usedEncounterIds.has(e.id));
     if (remainingPool.length === 0) {
-      // 如果所有奇遇都用完了，重新开放（极端情况）
       remainingPool = eligible;
       usedEncounterIds.clear();
     }
@@ -1260,7 +1259,7 @@ export function rollEncounters(
     usedEncounterIds.add(encounter.id);
 
     results.push({
-      heroName: shuffledHeroes[i],
+      heroName: shuffledHeroes[i % shuffledHeroes.length], // 循环分配英雄
       encounter,
     });
   }

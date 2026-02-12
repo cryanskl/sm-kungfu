@@ -42,6 +42,7 @@ interface WulinStore {
   // P2: 弹幕（本地即时显示）
   localDanmaku: DanmakuItem[];
   addLocalDanmaku: (item: DanmakuItem) => void;
+  clearLocalDanmaku: () => void;
   // P2: 音效
   isMuted: boolean;
   toggleMute: () => void;
@@ -104,6 +105,7 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
   addLocalDanmaku: (item) => set((s) => ({
     localDanmaku: [...s.localDanmaku.slice(-49), item],
   })),
+  clearLocalDanmaku: () => set({ localDanmaku: [] }),
   // P2: 音效
   isMuted: typeof window !== 'undefined' ? localStorage.getItem('wulin_muted') === '1' : false,
   toggleMute: () => set((s) => {

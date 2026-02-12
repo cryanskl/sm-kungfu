@@ -29,7 +29,7 @@ function getSeasonTitle(points: number): { icon: string; name: string } {
 }
 
 export default function Home() {
-  const { user, setUser, gameState, setGameState, currentEvents, setCurrentEvents, startPolling, pollNow, clearAudienceBets } = useWulinStore();
+  const { user, setUser, gameState, setGameState, currentEvents, setCurrentEvents, startPolling, pollNow, clearAudienceBets, clearLocalDanmaku } = useWulinStore();
 
   // UI 状态
   const [isJoining, setIsJoining] = useState(false);
@@ -42,6 +42,15 @@ export default function Home() {
   const [showDetail, setShowDetail] = useState<string | null>(null);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const [joinToast, setJoinToast] = useState<string | null>(null);
+  const [introTimer, setIntroTimer] = useState<number | null>(null);
+  const introTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [endingTimer, setEndingTimer] = useState<number | null>(null);
+  const endingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [endedCountdown, setEndedCountdown] = useState<number | null>(null);
+  const endedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [skipNextGame, setSkipNextGame] = useState(false);
+  const [isQueued, setIsQueued] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
 
   // 事件逐条揭晓
@@ -69,25 +78,33 @@ export default function Home() {
       if (timerRef.current) clearTimeout(timerRef.current);
       if (countdownRef.current) clearInterval(countdownRef.current);
       if (roundTimerRef.current) clearInterval(roundTimerRef.current);
+      if (introTimerRef.current) clearInterval(introTimerRef.current);
+      if (endingTimerRef.current) clearInterval(endingTimerRef.current);
+      if (endedTimerRef.current) clearInterval(endedTimerRef.current);
     };
   }, []);
 
-  // === 候补弹窗：游戏进入 waiting/countdown 时自动关闭 ===
+  // === 候补弹窗：游戏进入 waiting/countdown 时自动关闭 + 重置赛后状态 ===
   useEffect(() => {
-    if (queueInfo && (gameState?.status === 'waiting' || gameState?.status === 'countdown')) {
-      setQueueInfo(null);
+    if (gameState?.status === 'waiting' || gameState?.status === 'countdown') {
+      if (queueInfo) setQueueInfo(null);
+      setSkipNextGame(false);
+      setEndedCountdown(null);
+      setIsQueued(false);
+      if (endedTimerRef.current) { clearInterval(endedTimerRef.current); endedTimerRef.current = null; }
     }
   }, [gameState?.status, queueInfo]);
 
-  // === 新一局重置押注 ===
+  // === 新一局重置押注 + 弹幕 ===
   const prevGameIdRef = useRef<string | null>(null);
   useEffect(() => {
     const gid = gameState?.gameId ?? null;
     if (prevGameIdRef.current && gid !== prevGameIdRef.current) {
       clearAudienceBets();
+      clearLocalDanmaku();
     }
     prevGameIdRef.current = gid;
-  }, [gameState?.gameId, clearAudienceBets]);
+  }, [gameState?.gameId, clearAudienceBets, clearLocalDanmaku]);
 
   // === 状态驱动器：监听 gameState.status 自动推进 ===
   useEffect(() => {
@@ -104,10 +121,21 @@ export default function Home() {
       startCountdown(gameId);
     }
 
-    // intro → 25 秒后开始 R1
+    // intro → 20 秒后开始 R1，同时启动 intro 倒计时显示
     if (status === 'intro') {
       lastTriggeredRef.current = key;
       clearAllTimers();
+      setIntroTimer(20);
+      if (introTimerRef.current) clearInterval(introTimerRef.current);
+      introTimerRef.current = setInterval(() => {
+        setIntroTimer(prev => {
+          if (prev === null || prev <= 1) {
+            if (introTimerRef.current) clearInterval(introTimerRef.current);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
       timerRef.current = setTimeout(() => triggerRound(gameId, 1), 20000);
     }
 
@@ -127,14 +155,72 @@ export default function Home() {
       timerRef.current = setTimeout(() => triggerFinals(gameId), 5000);
     }
 
-    // ending → 触发结束
+    // ending → 10 秒后触发结束，同时启动 ending 倒计时显示
     if (status === 'ending') {
       lastTriggeredRef.current = key;
       clearAllTimers();
+      setEndingTimer(10);
+      if (endingTimerRef.current) clearInterval(endingTimerRef.current);
+      endingTimerRef.current = setInterval(() => {
+        setEndingTimer(prev => {
+          if (prev === null || prev <= 1) {
+            if (endingTimerRef.current) clearInterval(endingTimerRef.current);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
       timerRef.current = setTimeout(() => triggerEnd(gameId), 10000);
+    }
+
+    // ended → 45 秒倒计时自动进入下一局
+    if (status === 'ended') {
+      lastTriggeredRef.current = key;
+      setEndedCountdown(45);
+      if (endedTimerRef.current) clearInterval(endedTimerRef.current);
+      endedTimerRef.current = setInterval(() => {
+        setEndedCountdown(prev => {
+          if (prev === null || prev <= 1) {
+            if (endedTimerRef.current) { clearInterval(endedTimerRef.current); endedTimerRef.current = null; }
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
     }
   }, [gameState?.status, gameState?.gameId]);
 
+  // === ended 倒计时到 0：自动加入或刷新 ===
+  useEffect(() => {
+    if (endedCountdown === 0 && gameState?.status === 'ended') {
+      if (!skipNextGame) {
+        handleJoin();
+      } else {
+        pollNow();
+      }
+    }
+  }, [endedCountdown]);
+
+  // === 安全兜底：ending 状态下持续重试 triggerEnd，直到成功转为 ended ===
+  const endRetryRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    // 清理旧的重试
+    if (endRetryRef.current) { clearInterval(endRetryRef.current); endRetryRef.current = null; }
+
+    if (gameState?.status === 'ending' && gameState?.gameId && !isRevealing) {
+      // 立即尝试一次
+      triggerEnd(gameState.gameId);
+      // 每 5 秒重试
+      const gid = gameState.gameId;
+      endRetryRef.current = setInterval(() => {
+        triggerEnd(gid);
+      }, 5000);
+    }
+
+    return () => {
+      if (endRetryRef.current) { clearInterval(endRetryRef.current); endRetryRef.current = null; }
+    };
+  }, [isRevealing, gameState?.status, gameState?.gameId]);
 
   // === P2: 音效触发 ===
   const prevStatusRef = useRef<string>('');
@@ -243,15 +329,32 @@ export default function Home() {
         if (data.position > 12) {
           setQueueInfo({ position: data.position, estimatedMinutes: data.estimatedMinutes });
         } else {
-          setJoinToast(`已排入下一局（第${data.position}位），可先观战`);
-          setTimeout(() => setJoinToast(null), 4000);
+          setJoinToast('比赛进行中，已排入下一局，先观战吧');
+          setTimeout(() => setJoinToast(null), 5000);
         }
-      } else if (!res.ok) {
+      } else if (res.ok) {
+        setJoinToast('入座成功！等待其他侠客加入…');
+        setTimeout(() => setJoinToast(null), 3000);
+      } else {
         setErrorMsg(data.error || '入座失败');
       }
     } catch { setErrorMsg('网络错误'); }
     setIsJoining(false);
   }, [user]);
+
+  const handleLeave = useCallback(async () => {
+    setIsLeaving(true);
+    try {
+      const res = await fetch('/api/game/leave', { method: 'POST' });
+      if (res.ok) {
+        pollNow();
+      } else {
+        const data = await res.json();
+        setErrorMsg(data.error || '退出失败');
+      }
+    } catch { setErrorMsg('网络错误'); }
+    setIsLeaving(false);
+  }, [pollNow]);
 
   const triggerStart = useCallback(async (gameId: string) => {
     if (isProcessing) return;
@@ -340,6 +443,7 @@ export default function Home() {
   const hotRanking = isRevealing ? progressiveHotRanking : (gameState?.hotRanking || []);
   const isGameActive = status.startsWith('round_') || status.startsWith('processing_') ||
     status === 'intro' || status === 'semifinals' || status === 'final' || status === 'ending';
+  const isParticipant = user.isLoggedIn && gameState?.heroes?.some(h => h.heroId === user.heroId);
 
   return (
     <div className="min-h-screen bg-[--bg-primary] pb-16">
@@ -369,6 +473,11 @@ export default function Home() {
                 <span className="text-[--accent-gold] font-bold whitespace-nowrap">
                   {isFinals || isEnding ? '🏆' : '📜'} {roundTitle}
                 </span>
+                {isEnding && endingTimer !== null && endingTimer > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-[--accent-red]/15 border border-[--accent-red]/30 text-[--accent-red] font-mono text-xs font-bold">
+                    {endingTimer}s
+                  </span>
+                )}
                 {gameState?.nextRoundPreview && !isFinals && !isEnding && (
                   <span className="text-xs text-[--text-secondary] truncate hidden lg:inline">
                     ⏭️ {gameState.nextRoundPreview}
@@ -389,6 +498,30 @@ export default function Home() {
           })()}
           <div className="flex items-center gap-4 text-sm">
             <MuteToggle />
+            {/* 观众排队按钮 */}
+            {user.isLoggedIn && isGameActive && !isParticipant && (
+              <button
+                onClick={() => { if (!isQueued) { handleJoin(); setIsQueued(true); } }}
+                disabled={isQueued}
+                className={`px-3 py-1 rounded-lg text-xs font-bold border transition ${
+                  isQueued
+                    ? 'border-green-500/40 text-green-400 opacity-70 cursor-default'
+                    : 'border-[--accent-gold]/50 text-[--accent-gold] hover:bg-[--accent-gold]/10'
+                }`}
+              >
+                {isQueued ? '✅ 已排队' : '⏳ 排队等候'}
+              </button>
+            )}
+            {/* 参赛者退出按钮 */}
+            {isParticipant && (status === 'waiting' || status === 'countdown') && (
+              <button
+                onClick={handleLeave}
+                disabled={isLeaving}
+                className="px-3 py-1 rounded-lg text-xs font-bold border border-[--accent-red]/50 text-[--accent-red] hover:bg-[--accent-red]/10 transition disabled:opacity-50"
+              >
+                {isLeaving ? '退出中…' : '🚪 退出比赛'}
+              </button>
+            )}
             {user.isLoggedIn ? (
               <div className="flex items-center gap-3 relative" ref={profileRef}>
                 {(() => {
@@ -549,6 +682,15 @@ export default function Home() {
             <div className="text-center mb-8">
               <h2 className="text-3xl font-bold text-[--accent-gold] mb-2 animate-glow-text">📜 开场点名</h2>
               <p className="text-[--text-secondary]">十二侠客登场亮相，即将开战</p>
+              {introTimer !== null && introTimer > 0 && (
+                <div className="mt-3 inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[--accent-red]/15 border border-[--accent-red]/30">
+                  <span className="text-2xl font-bold text-[--accent-red] font-mono">{introTimer}</span>
+                  <span className="text-sm text-[--text-secondary]">秒后开战</span>
+                </div>
+              )}
+              {introTimer === 0 && (
+                <div className="mt-3 text-[--accent-gold] font-bold animate-pulse">⚔️ 即将开战…</div>
+              )}
             </div>
             {/* P2: 押注面板 */}
             <div className="max-w-2xl mx-auto mb-6">
@@ -725,15 +867,37 @@ export default function Home() {
                   当前候补 {gameState!.queueCount} 人
                 </p>
               )}
-              <div className="flex items-center justify-center gap-4">
-                <button onClick={handleJoin} disabled={isJoining}
+              <div className="flex items-center justify-center gap-3 flex-wrap">
+                <button onClick={() => { setEndedCountdown(null); if (endedTimerRef.current) { clearInterval(endedTimerRef.current); endedTimerRef.current = null; } handleJoin(); }}
+                  disabled={isJoining}
                   className="btn-gold text-lg px-8 py-3">
-                  {isJoining ? '创建中，请稍等…' : '🔄 开始下一局'}
+                  {isJoining ? '加入中…' : '⚔️ 加入房间'}
                 </button>
+                {endedCountdown !== null && endedCountdown > 0 && (
+                  <span className="text-sm text-[--text-secondary] font-mono">
+                    {skipNextGame ? '将观战下一局' : `${endedCountdown}s 后自动加入`}
+                  </span>
+                )}
+                {!skipNextGame ? (
+                  <button
+                    onClick={() => setSkipNextGame(true)}
+                    className="px-4 py-2 rounded-lg text-sm border border-[--text-secondary]/30 text-[--text-secondary] hover:bg-[--text-secondary]/10 transition"
+                  >
+                    👀 仅观战
+                  </button>
+                ) : (
+                  <span className="text-xs text-[--text-secondary] px-3 py-1.5 rounded-lg bg-[--text-secondary]/10 border border-[--text-secondary]/20">
+                    👀 观战模式
+                  </span>
+                )}
                 {/* P2: 分享战报 */}
                 <ShareButton />
               </div>
-              <p className="text-xs text-[--text-secondary] mt-2">点击入座，自动创建新的武林大会</p>
+              <p className="text-xs text-[--text-secondary] mt-2">
+                {skipNextGame
+                  ? '将以观众身份观看下一局'
+                  : '未满12人自动入座，已满则顺位等候，比赛已开始则先观战'}
+              </p>
             </div>
           </div>
         )}

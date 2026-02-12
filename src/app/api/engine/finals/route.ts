@@ -2,11 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { resolveFinalsRound } from '@/lib/game/combat';
 import { finalsPrompt } from '@/lib/game/prompts';
-import { SecondMeClient, parseAiResponse } from '@/lib/game/secondme-client';
+import { SecondMeClient } from '@/lib/game/secondme-client';
 import { NPC_TEMPLATES } from '@/lib/game/npc-data/templates';
 import { FINALS_TOP_REPUTATION, FINALS_TOP_HOT, FINALS_ROUNDS } from '@/lib/game/constants';
 import { FinalsMove, GameEvent } from '@/lib/types';
 import { mapGameStateRow } from '@/lib/game/state-mapper';
+import {
+  getMoveName, getInnerThought, getReadyNarrative,
+  getClashNarrative, getWinTaunt, getLoseReaction,
+} from '@/lib/game/finals-narrative';
 
 export const maxDuration = 60;
 
@@ -25,7 +29,6 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error || !game) {
-      // 已在处理，返回缓存
       const { data: cached } = await supabaseAdmin
         .from('game_events')
         .select('*')
@@ -53,20 +56,17 @@ export async function POST(request: NextRequest) {
     const finalistsSet = new Set<string>();
     const finalistsList: any[] = [];
 
-    // 声望前2
     for (const gh of repSorted) {
       if (finalistsSet.size >= FINALS_TOP_REPUTATION) break;
       finalistsSet.add(gh.hero_id);
       finalistsList.push(gh);
     }
-    // 热搜前2（去重）
     for (const gh of hotSorted) {
       if (finalistsList.length >= 4) break;
       if (finalistsSet.has(gh.hero_id)) continue;
       finalistsSet.add(gh.hero_id);
       finalistsList.push(gh);
     }
-    // 不足4人递补声望
     for (const gh of repSorted) {
       if (finalistsList.length >= 4) break;
       if (finalistsSet.has(gh.hero_id)) continue;
@@ -74,7 +74,6 @@ export async function POST(request: NextRequest) {
       finalistsList.push(gh);
     }
 
-    // 降级处理：不足2人
     if (finalistsList.length < 2) {
       await supabaseAdmin.from('games').update({ status: 'ending' }).eq('id', gameId);
       const champion = finalistsList[0] || alive[0];
@@ -93,7 +92,6 @@ export async function POST(request: NextRequest) {
     } as any);
 
     // === 半决赛：交叉对阵 ===
-    // [0] vs [3], [1] vs [2]（声望1 vs 热搜2，声望2 vs 热搜1）
     const matchups = finalistsList.length >= 4
       ? [[finalistsList[0], finalistsList[3]], [finalistsList[1], finalistsList[2]]]
       : [[finalistsList[0], finalistsList[1]]];
@@ -107,20 +105,25 @@ export async function POST(request: NextRequest) {
       let h2Hp = hero2gh.hp;
 
       events.push({
-        eventType: 'fight',
+        eventType: 'director_event',
         priority: 7,
         heroId: hero1gh.hero_id,
         targetHeroId: hero2gh.hero_id,
-        narrative: `⚔️ 半决赛！${h1.hero_name} 对阵 ${h2.hero_name}！`,
+        narrative: `⚔️ 半决赛！${h1.hero_name}（HP:${h1Hp}）对阵 ${h2.hero_name}（HP:${h2Hp}）！`,
         data: { phase: 'semifinal' },
       } as any);
 
       // 3 回合出招
       for (let r = 1; r <= FINALS_ROUNDS; r++) {
-        const [move1, move2] = await Promise.all([
+        const [res1, res2] = await Promise.all([
           getFinalsMove(hero1gh, h2.hero_name),
           getFinalsMove(hero2gh, h1.hero_name),
         ]);
+
+        const move1 = res1.move;
+        const move2 = res2.move;
+        const moveName1 = getMoveName(h1.npc_template_id, h1.faction, move1);
+        const moveName2 = getMoveName(h2.npc_template_id, h2.faction, move2);
 
         const result = resolveFinalsRound({
           move1, move2,
@@ -133,17 +136,86 @@ export async function POST(request: NextRequest) {
         h1Hp = Math.max(0, h1Hp + result.hero1HpDelta);
         h2Hp = Math.max(0, h2Hp + result.hero2HpDelta);
 
-        const moveEmoji: Record<string, string> = { attack: '⚔️', defend: '🛡️', ultimate: '💥', bluff: '🎭' };
-
+        // --- Event 1: Hero 1 readies ---
         events.push({
           eventType: 'fight',
-          priority: 6,
+          priority: 5,
           heroId: hero1gh.hero_id,
-          targetHeroId: hero2gh.hero_id,
-          narrative: `第${r}招：${h1.hero_name}${moveEmoji[move1] || ''}${move1} vs ${h2.hero_name}${moveEmoji[move2] || ''}${move2}。${result.narrative}`,
-          hpDelta: result.hero1HpDelta,
-          data: { round: r, move1, move2, result: result.result, h1Hp, h2Hp },
+          narrative: getReadyNarrative(h1.hero_name, moveName1, move1),
+          innerThought: getInnerThought(h1.npc_template_id, h1.personality_type),
+          taunt: res1.taunt,
+          data: { phase: 'semifinal', round: r, move: move1 },
         } as any);
+
+        // --- Event 2: Hero 2 readies ---
+        events.push({
+          eventType: 'fight',
+          priority: 5,
+          heroId: hero2gh.hero_id,
+          narrative: getReadyNarrative(h2.hero_name, moveName2, move2),
+          innerThought: getInnerThought(h2.npc_template_id, h2.personality_type),
+          taunt: res2.taunt,
+          data: { phase: 'semifinal', round: r, move: move2 },
+        } as any);
+
+        // --- Event 3: Clash result ---
+        const clashText = getClashNarrative(
+          h1.hero_name, h2.hero_name,
+          moveName1, moveName2, move1, move2, result.result,
+        );
+
+        // Determine proper hpDelta routing for EventRevealer
+        // EventRevealer applies hpDelta to targetHeroId for fight events
+        if (result.hero1HpDelta < 0 && result.hero2HpDelta < 0) {
+          // Both hurt — two events
+          events.push({
+            eventType: 'fight', priority: 7,
+            heroId: hero1gh.hero_id,
+            targetHeroId: hero2gh.hero_id,
+            narrative: clashText,
+            hpDelta: result.hero2HpDelta,
+            data: { round: r, move1, move2, result: result.result, h1Hp, h2Hp },
+          } as any);
+          events.push({
+            eventType: 'fight', priority: 5,
+            heroId: hero2gh.hero_id,
+            targetHeroId: hero1gh.hero_id,
+            narrative: `${h1.hero_name}也被反震之力波及！`,
+            hpDelta: result.hero1HpDelta,
+            data: { round: r, aftershock: true },
+          } as any);
+        } else if (result.hero2HpDelta < 0) {
+          // Hero2 takes damage
+          events.push({
+            eventType: 'fight', priority: 7,
+            heroId: hero1gh.hero_id,
+            targetHeroId: hero2gh.hero_id,
+            narrative: clashText,
+            taunt: getWinTaunt(h1.npc_template_id),
+            hpDelta: result.hero2HpDelta,
+            data: { round: r, move1, move2, result: result.result, h1Hp, h2Hp },
+          } as any);
+        } else if (result.hero1HpDelta < 0) {
+          // Hero1 takes damage
+          events.push({
+            eventType: 'fight', priority: 7,
+            heroId: hero2gh.hero_id,
+            targetHeroId: hero1gh.hero_id,
+            narrative: clashText,
+            taunt: getWinTaunt(h2.npc_template_id),
+            hpDelta: result.hero1HpDelta,
+            data: { round: r, move1, move2, result: result.result, h1Hp, h2Hp },
+          } as any);
+        } else {
+          // Draw / mutual heal
+          events.push({
+            eventType: 'fight', priority: 6,
+            heroId: hero1gh.hero_id,
+            targetHeroId: hero2gh.hero_id,
+            narrative: clashText,
+            data: { round: r, move1, move2, result: result.result, h1Hp, h2Hp },
+          } as any);
+        }
 
         if (h1Hp <= 0 || h2Hp <= 0) break;
       }
@@ -155,7 +227,6 @@ export async function POST(request: NextRequest) {
       } else if (h2Hp > h1Hp) {
         winner = hero2gh; loser = hero1gh;
       } else {
-        // 同HP比声望
         winner = (hero1gh.reputation || 0) >= (hero2gh.reputation || 0) ? hero1gh : hero2gh;
         loser = winner === hero1gh ? hero2gh : hero1gh;
       }
@@ -168,10 +239,11 @@ export async function POST(request: NextRequest) {
         heroId: winner.hero_id,
         targetHeroId: loser.hero_id,
         narrative: `🎉 ${winner.hero.hero_name} 击败 ${loser.hero.hero_name}，晋级决赛！`,
+        taunt: getWinTaunt(winner.hero.npc_template_id),
+        innerThought: getLoseReaction(loser.hero.npc_template_id),
         data: { phase: 'semifinal_result' },
       } as any);
 
-      // 更新HP
       await supabaseAdmin.from('game_heroes').update({ hp: h1Hp }).eq('id', hero1gh.id);
       await supabaseAdmin.from('game_heroes').update({ hp: h2Hp }).eq('id', hero2gh.id);
     }
@@ -187,15 +259,20 @@ export async function POST(request: NextRequest) {
       events.push({
         eventType: 'director_event',
         priority: 8,
-        narrative: `🏆 终极决战！${f1.hero_name} vs ${f2.hero_name}！谁将成为武林盟主？！`,
+        narrative: `🏆 终极决战！${f1.hero_name}（HP:${f1Hp}）vs ${f2.hero_name}（HP:${f2Hp}）！谁将成为武林盟主？！`,
         data: { phase: 'final' },
       } as any);
 
       for (let r = 1; r <= FINALS_ROUNDS; r++) {
-        const [move1, move2] = await Promise.all([
+        const [res1, res2] = await Promise.all([
           getFinalsMove(f1gh, f2.hero_name),
           getFinalsMove(f2gh, f1.hero_name),
         ]);
+
+        const move1 = res1.move;
+        const move2 = res2.move;
+        const moveName1 = getMoveName(f1.npc_template_id, f1.faction, move1);
+        const moveName2 = getMoveName(f2.npc_template_id, f2.faction, move2);
 
         const result = resolveFinalsRound({
           move1, move2,
@@ -208,17 +285,80 @@ export async function POST(request: NextRequest) {
         f1Hp = Math.max(0, f1Hp + result.hero1HpDelta);
         f2Hp = Math.max(0, f2Hp + result.hero2HpDelta);
 
-        const moveEmoji: Record<string, string> = { attack: '⚔️', defend: '🛡️', ultimate: '💥', bluff: '🎭' };
-
+        // --- Event 1: Fighter 1 readies ---
         events.push({
           eventType: 'fight',
-          priority: 7,
+          priority: 6,
           heroId: f1gh.hero_id,
-          targetHeroId: f2gh.hero_id,
-          narrative: `🏆 决赛第${r}招：${f1.hero_name}${moveEmoji[move1] || ''}${move1} vs ${f2.hero_name}${moveEmoji[move2] || ''}${move2}。${result.narrative}`,
-          hpDelta: result.hero1HpDelta,
-          data: { round: r, move1, move2, result: result.result, f1Hp, f2Hp },
+          narrative: `🏆 ${getReadyNarrative(f1.hero_name, moveName1, move1)}`,
+          innerThought: getInnerThought(f1.npc_template_id, f1.personality_type),
+          taunt: res1.taunt,
+          data: { phase: 'final', round: r, move: move1 },
         } as any);
+
+        // --- Event 2: Fighter 2 readies ---
+        events.push({
+          eventType: 'fight',
+          priority: 6,
+          heroId: f2gh.hero_id,
+          narrative: `🏆 ${getReadyNarrative(f2.hero_name, moveName2, move2)}`,
+          innerThought: getInnerThought(f2.npc_template_id, f2.personality_type),
+          taunt: res2.taunt,
+          data: { phase: 'final', round: r, move: move2 },
+        } as any);
+
+        // --- Event 3: Clash ---
+        const clashText = `🏆 决赛第${r}招！` + getClashNarrative(
+          f1.hero_name, f2.hero_name,
+          moveName1, moveName2, move1, move2, result.result,
+        );
+
+        if (result.hero1HpDelta < 0 && result.hero2HpDelta < 0) {
+          events.push({
+            eventType: 'fight', priority: 8,
+            heroId: f1gh.hero_id,
+            targetHeroId: f2gh.hero_id,
+            narrative: clashText,
+            hpDelta: result.hero2HpDelta,
+            data: { round: r, move1, move2, result: result.result, f1Hp, f2Hp },
+          } as any);
+          events.push({
+            eventType: 'fight', priority: 6,
+            heroId: f2gh.hero_id,
+            targetHeroId: f1gh.hero_id,
+            narrative: `${f1.hero_name}也被反震之力波及！`,
+            hpDelta: result.hero1HpDelta,
+            data: { round: r, aftershock: true },
+          } as any);
+        } else if (result.hero2HpDelta < 0) {
+          events.push({
+            eventType: 'fight', priority: 8,
+            heroId: f1gh.hero_id,
+            targetHeroId: f2gh.hero_id,
+            narrative: clashText,
+            taunt: getWinTaunt(f1.npc_template_id),
+            hpDelta: result.hero2HpDelta,
+            data: { round: r, move1, move2, result: result.result, f1Hp, f2Hp },
+          } as any);
+        } else if (result.hero1HpDelta < 0) {
+          events.push({
+            eventType: 'fight', priority: 8,
+            heroId: f2gh.hero_id,
+            targetHeroId: f1gh.hero_id,
+            narrative: clashText,
+            taunt: getWinTaunt(f2.npc_template_id),
+            hpDelta: result.hero1HpDelta,
+            data: { round: r, move1, move2, result: result.result, f1Hp, f2Hp },
+          } as any);
+        } else {
+          events.push({
+            eventType: 'fight', priority: 7,
+            heroId: f1gh.hero_id,
+            targetHeroId: f2gh.hero_id,
+            narrative: clashText,
+            data: { round: r, move1, move2, result: result.result, f1Hp, f2Hp },
+          } as any);
+        }
 
         if (f1Hp <= 0 || f2Hp <= 0) break;
       }
@@ -239,16 +379,16 @@ export async function POST(request: NextRequest) {
         priority: 8,
         heroId: champion.hero_id,
         narrative: `🏆🏆🏆 ${champion.hero.hero_name} 击败 ${runnerUp.hero.hero_name}，荣登武林盟主！天下第一！`,
+        taunt: getWinTaunt(champion.hero.npc_template_id),
+        innerThought: getLoseReaction(runnerUp.hero.npc_template_id),
         data: { championHeroId: champion.hero_id, runnerUpHeroId: runnerUp.hero_id },
       } as any);
 
-      // 更新游戏
       await supabaseAdmin.from('games').update({
         status: 'ending',
         champion_hero_id: champion.hero_id,
       }).eq('id', gameId);
 
-      // 更新 game_state 缓存
       await supabaseAdmin.from('game_state').upsert({
         id: 'current',
         game_id: gameId,
@@ -259,13 +399,13 @@ export async function POST(request: NextRequest) {
         updated_at: new Date().toISOString(),
       });
     } else if (winners.length === 1) {
-      // 只有一个赢家（2人半决赛）
       const champion = winners[0];
       events.push({
         eventType: 'champion',
         priority: 8,
         heroId: champion.hero_id,
         narrative: `🏆 ${champion.hero.hero_name} 无人能敌，荣登武林盟主！`,
+        taunt: getWinTaunt(champion.hero.npc_template_id),
         data: { championHeroId: champion.hero_id },
       } as any);
 
@@ -287,13 +427,14 @@ export async function POST(request: NextRequest) {
           hero_id: e.heroId || null,
           target_hero_id: e.targetHeroId || null,
           narrative: e.narrative || '',
+          taunt: e.taunt || null,
+          inner_thought: e.innerThought || null,
           data: e.data || {},
           hp_delta: e.hpDelta || 0,
         }))
       );
     }
 
-    // Read fresh game_state for immediate client update
     const { data: freshState } = await supabaseAdmin
       .from('game_state').select('*').eq('id', 'current').single();
 
@@ -307,22 +448,26 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// 获取决赛出招
-async function getFinalsMove(gh: any, opponentName: string): Promise<FinalsMove> {
+// 获取决赛出招（返回 move + taunt）
+async function getFinalsMove(gh: any, opponentName: string): Promise<{ move: FinalsMove; taunt: string }> {
   const hero = gh.hero;
   const validMoves: FinalsMove[] = ['attack', 'defend', 'ultimate', 'bluff'];
 
   if (hero.is_npc) {
-    // NPC 出招逻辑
     const template = NPC_TEMPLATES.find(t => t.id === hero.npc_template_id);
+    let move: FinalsMove;
     if (template) {
-      if (template.alwaysFightStrongest) return 'attack';
-      if (template.neverFight) return Math.random() < 0.6 ? 'defend' : 'bluff';
-      if (template.personalityType === 'aggressive') return Math.random() < 0.5 ? 'attack' : 'ultimate';
-      if (template.personalityType === 'cautious') return Math.random() < 0.5 ? 'defend' : 'attack';
-      if (template.personalityType === 'cunning') return Math.random() < 0.4 ? 'bluff' : 'attack';
+      if (template.alwaysFightStrongest) move = 'attack';
+      else if (template.neverFight) move = Math.random() < 0.6 ? 'defend' : 'bluff';
+      else if (template.personalityType === 'aggressive') move = Math.random() < 0.5 ? 'attack' : 'ultimate';
+      else if (template.personalityType === 'cautious') move = Math.random() < 0.5 ? 'defend' : 'attack';
+      else if (template.personalityType === 'cunning') move = Math.random() < 0.4 ? 'bluff' : 'attack';
+      else move = validMoves[Math.floor(Math.random() * validMoves.length)];
+    } else {
+      move = validMoves[Math.floor(Math.random() * validMoves.length)];
     }
-    return validMoves[Math.floor(Math.random() * validMoves.length)];
+    const taunt = template?.signatureLines?.[Math.floor(Math.random() * (template?.signatureLines?.length || 1))] || '……';
+    return { move, taunt };
   }
 
   // 真人：调 SecondMe
@@ -357,20 +502,21 @@ async function getFinalsMove(gh: any, opponentName: string): Promise<FinalsMove>
     }, opponentName);
 
     const raw = await client.act(prompt);
-    // 解析 move
     try {
       const match = raw.match(/\{[\s\S]*\}/);
       if (match) {
         const parsed = JSON.parse(match[0]);
-        if (validMoves.includes(parsed.move)) return parsed.move;
+        if (validMoves.includes(parsed.move)) {
+          return { move: parsed.move, taunt: parsed.taunt || '……' };
+        }
       }
     } catch { /* fallback */ }
-    // regex fallback
     const moveMatch = raw.match(/"move"\s*:\s*"(\w+)"/);
     if (moveMatch && validMoves.includes(moveMatch[1] as FinalsMove)) {
-      return moveMatch[1] as FinalsMove;
+      const tauntMatch = raw.match(/"taunt"\s*:\s*"([^"]+)"/);
+      return { move: moveMatch[1] as FinalsMove, taunt: tauntMatch?.[1] || '……' };
     }
   } catch { /* fallback */ }
 
-  return validMoves[Math.floor(Math.random() * validMoves.length)];
+  return { move: validMoves[Math.floor(Math.random() * validMoves.length)], taunt: '……' };
 }

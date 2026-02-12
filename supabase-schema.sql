@@ -209,6 +209,27 @@ CREATE TABLE IF NOT EXISTS activity_log (
 CREATE INDEX IF NOT EXISTS idx_activity_log_time ON activity_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_log_type ON activity_log(event_type, created_at);
 
+-- === 原子扣款函数（防止并发双花）===
+CREATE OR REPLACE FUNCTION deduct_balance(p_hero_id UUID, p_amount INT)
+RETURNS INT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_new_balance INT;
+BEGIN
+  UPDATE heroes
+  SET balance = balance - p_amount
+  WHERE id = p_hero_id AND balance >= p_amount
+  RETURNING balance INTO v_new_balance;
+
+  IF NOT FOUND THEN
+    RETURN -1;  -- 余额不足
+  END IF;
+
+  RETURN v_new_balance;
+END;
+$$;
+
 -- 初始化 game_state
 INSERT INTO game_state (id, status, phase) VALUES ('current', 'waiting', 'waiting')
 ON CONFLICT (id) DO NOTHING;

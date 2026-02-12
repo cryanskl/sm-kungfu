@@ -56,29 +56,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '已押注此侠客，请选其他人' }, { status: 400 });
     }
 
-    // 登录用户：检查并扣除余额
+    // 登录用户：原子扣除余额（防止并发双花）
     let newBalance: number | undefined;
     if (isLoggedIn) {
-      const { data: hero } = await supabaseAdmin
-        .from('heroes')
-        .select('balance')
-        .eq('id', loggedInHeroId)
-        .single();
+      const { data: deducted, error: deductErr } = await supabaseAdmin
+        .rpc('deduct_balance', { p_hero_id: loggedInHeroId, p_amount: amount });
 
-      const currentBalance = hero?.balance ?? 10000;
-      if (currentBalance < amount) {
-        return NextResponse.json({ error: '银两不足' }, { status: 400 });
-      }
-
-      const { error: updateErr } = await supabaseAdmin
-        .from('heroes')
-        .update({ balance: currentBalance - amount })
-        .eq('id', loggedInHeroId);
-
-      if (updateErr) {
+      if (deductErr || deducted === null || deducted === undefined) {
+        // rpc 返回 -1 表示余额不足
+        if (deducted === -1) {
+          return NextResponse.json({ error: '银两不足' }, { status: 400 });
+        }
         return NextResponse.json({ error: '扣款失败' }, { status: 500 });
       }
-      newBalance = currentBalance - amount;
+      if (deducted === -1) {
+        return NextResponse.json({ error: '银两不足' }, { status: 400 });
+      }
+      newBalance = deducted;
     }
 
     // 写入 bets（不再存赔率，改用排名倍率结算）

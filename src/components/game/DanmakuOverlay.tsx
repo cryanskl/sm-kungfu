@@ -20,6 +20,17 @@ export function DanmakuOverlay() {
   const localDanmaku = useWulinStore(s => s.localDanmaku);
   const [floating, setFloating] = useState<FloatingDanmaku[]>([]);
   const seenIds = useRef(new Set<string>());
+  const prevGameIdRef = useRef<string | null>(null);
+
+  // 新比赛清空弹幕
+  useEffect(() => {
+    const gid = gameState?.gameId ?? null;
+    if (prevGameIdRef.current && gid !== prevGameIdRef.current) {
+      seenIds.current.clear();
+      setFloating([]);
+    }
+    prevGameIdRef.current = gid;
+  }, [gameState?.gameId]);
 
   // Merge server danmaku + local danmaku, deduplicate
   useEffect(() => {

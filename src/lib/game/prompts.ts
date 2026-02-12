@@ -105,36 +105,43 @@ export function finalsPrompt(self: GameHeroSnapshot, opponentName: string): stri
 export const DIRECTOR_EVENTS: Record<number, {
   title: string;
   description: string;
+  flavor: string;
   availableActions: string[];
 }> = {
   1: {
     title: '残卷落地',
     description: '《九阴真经》残卷从天而降！只够3人拿！选explore去抢，选fight硬夺！',
+    flavor: '一阵狂风吹过擂台，三卷泛黄的经书从天际飘落——正是失传百年的《九阴真经》残卷！各路英雄瞬间红了眼，一场腥风血雨在所难免。',
     availableActions: ['fight', 'explore', 'train', 'ally'],
   },
   2: {
     title: '方丈收徒',
     description: '少林方丈今日只收一名关门弟子！选train发表拜师宣言，其他人自由行动。',
+    flavor: '少林方丈空闻大师亲临擂台，目光如炬扫过众人。他宣布：今日只收一名关门弟子，传授毕生绝学。各路英雄纷纷摩拳擦掌，一时间拜师宣言此起彼伏。',
     availableActions: ['train', 'fight', 'explore', 'ally'],
   },
   3: {
     title: '盟约公开',
     description: '导演组公开所有联盟关系！背叛按钮已开放——偷走盟友30%资源！',
+    flavor: '一封密信被人截获，所有同盟关系大白于天下！昔日的盟友此刻面面相觑——是继续携手，还是趁机反戈一击？背叛的暗影笼罩着每一个人。',
     availableActions: ['fight', 'ally', 'betray', 'train'],
   },
   4: {
     title: '通缉令',
     description: '声望第一被挂上江湖通缉令！击败他获50声望！但通缉犯有侠义光环加持！',
+    flavor: '城门口贴出了一张鲜红的通缉令——声望最高者赫然在列！赏金丰厚，引得众人蠢蠢欲动。但通缉犯岂是易与之辈？侠义光环护身，实力更胜一筹。',
     availableActions: ['fight', 'train', 'ally', 'rest'],
   },
   5: {
     title: '生死状',
     description: '生死状已开！签字攻击翻倍+绝招解锁，但输了直接退场！不签则安全但掉声望。',
+    flavor: '擂台中央摆出了一张血红的生死状。签字者攻击翻倍、绝招解锁，但败者立刻退场，绝无翻盘之机。不签者虽得安全，却将被观众视为怯懦之辈。是生是死，一念之间。',
     availableActions: ['fight', 'train', 'rest'],
   },
   6: {
     title: '盟主加冕战',
     description: '声望前2+热搜前2=四强！半决赛+决赛，一招定胜负！',
+    flavor: '号角响彻云霄，最终的时刻到来！声望与热搜各取前二，四位绝世高手踏上盟主争夺战的擂台。攻守绝诈，一招定乾坤！武林至尊之位，今日必有所归。',
     availableActions: ['attack', 'defend', 'ultimate', 'bluff'],
   },
 };

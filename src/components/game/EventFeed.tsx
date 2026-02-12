@@ -27,6 +27,7 @@ function getEventIcon(eventType: string): string {
     comeback: '🌟',
     hot_news: '🔥',
     speech: '🎤',
+    encounter: '📜',
     champion: '🏆',
     title_award: '🎖️',
   };

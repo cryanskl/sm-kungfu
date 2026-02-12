@@ -275,7 +275,7 @@ async function resolveRound(
   events.push({
     eventType: 'director_event',
     priority: 8,
-    narrative: `【第${roundNumber}回合 · ${DIRECTOR_EVENTS[roundNumber].title}】${DIRECTOR_EVENTS[roundNumber].description}`,
+    narrative: `【第${roundNumber}回合 · ${DIRECTOR_EVENTS[roundNumber].title}】${DIRECTOR_EVENTS[roundNumber].flavor || DIRECTOR_EVENTS[roundNumber].description}`,
     data: { roundNumber, title: DIRECTOR_EVENTS[roundNumber].title },
   } as any);
 
@@ -566,8 +566,8 @@ async function resolveRound(
   // --- 随机奇遇 ---
   {
     const aliveNames = alive.filter(h => !h.isEliminated).map(h => h.heroName);
-    // 每回合 2~4 个奇遇，随存活人数缩放
-    const encounterCount = Math.min(Math.max(2, Math.floor(aliveNames.length / 3)), 4);
+    // 每回合 ~15-20 个奇遇，让 30s 内每秒都有新事件
+    const encounterCount = Math.min(Math.max(10, aliveNames.length + 8), 20);
     const rolled = rollEncounters(roundNumber, aliveNames, encounterCount);
 
     for (const { heroName, encounter } of rolled) {
