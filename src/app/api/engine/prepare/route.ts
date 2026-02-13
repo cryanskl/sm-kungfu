@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     const { data: currentGame } = await supabaseAdmin
       .from('games')
       .select('*')
-      .in('status', ['waiting', 'countdown'])
+      .in('status', ['waiting', 'countdown', 'preparing'])
       .order('created_at', { ascending: false })
       .limit(1)
       .single();

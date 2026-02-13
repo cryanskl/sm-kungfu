@@ -13,11 +13,11 @@ export async function POST(request: NextRequest) {
     const authError = await requireSession();
     if (authError) return authError;
 
-    // 获取当前游戏（prepare 已将其设回 countdown）
+    // 获取当前游戏（兼容 'preparing' 状态 — 旧版 prepare 可能残留）
     const { data: currentGame } = await supabaseAdmin
       .from('games')
       .select('*')
-      .in('status', ['waiting', 'countdown'])
+      .in('status', ['waiting', 'countdown', 'preparing'])
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
@@ -26,12 +26,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No game waiting' }, { status: 400 });
     }
 
-    // 幂等锁：countdown -> starting
+    // 幂等锁：countdown/preparing -> starting
     const { data: lockedGame, error: lockErr } = await supabaseAdmin
       .from('games')
       .update({ status: 'starting' })
       .eq('id', currentGame.id)
-      .in('status', ['waiting', 'countdown'])
+      .in('status', ['waiting', 'countdown', 'preparing'])
       .select()
       .single();
 
