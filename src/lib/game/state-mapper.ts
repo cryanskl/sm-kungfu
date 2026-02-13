@@ -29,6 +29,9 @@ export function mapGameStateRow(data: any): GameState {
     artifactPool: data.artifact_pool || null,
     audienceInfluence: data.audience_influence || null,
     queueCount: data.queue_count || 0,
+    displayRound: data.display_round ?? undefined,
+    batchProgress: data.batch_progress ?? undefined,
+    displayStartedAt: data.display_started_at ?? undefined,
     updatedAt: data.updated_at,
   };
 }

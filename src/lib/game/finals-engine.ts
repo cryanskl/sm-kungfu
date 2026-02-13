@@ -1,0 +1,598 @@
+/**
+ * 决赛引擎核心逻辑（不含状态锁和 game_state 缓存更新）。
+ * 提取自 /api/engine/finals 和 /api/engine/final，供 run-all / run-final 复用。
+ */
+import { supabaseAdmin } from '../supabase';
+import { resolveFinalsRound } from './combat';
+import { finalsPrompt } from './prompts';
+import { SecondMeClient } from './secondme-client';
+import { NPC_TEMPLATES } from './npc-data/templates';
+import { FINALS_TOP_REPUTATION, FINALS_TOP_HOT, FINALS_ROUNDS, INITIAL_HP, ARTIFACTS, ARTIFACT_POOL_SIZE } from './constants';
+import { FinalsMove, GameEvent, ArtifactEffect } from '../types';
+import {
+  getMoveName, getInnerThought, getReadyNarrative,
+  getClashNarrative, getWinTaunt, getLoseReaction,
+} from './finals-narrative';
+import { getHeroSnapshots } from './engine';
+import type { RoundResult } from './engine';
+
+/**
+ * 半决赛核心：选出四强，RPS 对战，返回事件 + 决赛选手信息。
+ * 不改 games.status，不更新 game_state 缓存。
+ */
+export async function processSemifinalsCore(gameId: string): Promise<{
+  result: RoundResult;
+  winners: any[];
+  artifactPool: any;
+}> {
+  console.log(`[FinalsEngine] ▶ processSemifinalsCore game=${gameId.slice(0,8)}`);
+  const t0 = Date.now();
+
+  // 幂等：检查是否已有半决赛事件（round=7 且 phase=semifinal）
+  const { data: existingSemifinalEvents } = await supabaseAdmin
+    .from('game_events')
+    .select('*')
+    .eq('game_id', gameId)
+    .eq('round', 7)
+    .order('sequence', { ascending: true });
+
+  // 如果已有半决赛事件且包含 semifinal 数据，跳过处理
+  const hasSemifinalEvents = existingSemifinalEvents && existingSemifinalEvents.length > 0
+    && existingSemifinalEvents.some((e: any) => e.data?.phase === 'semifinal' || e.data?.phase === 'semifinal_result');
+
+  if (hasSemifinalEvents) {
+    console.log(`[FinalsEngine] ■ semifinals already processed (${existingSemifinalEvents!.length} events)`);
+    const snapshots = await getHeroSnapshots(gameId);
+    // 从事件中恢复 winners
+    const semifinalResults = existingSemifinalEvents!.filter((e: any) => e.data?.phase === 'semifinal_result');
+    const winnerIds = semifinalResults.map((e: any) => e.hero_id);
+    const { data: winnerHeroes } = await supabaseAdmin
+      .from('game_heroes')
+      .select('*, hero:heroes(*)')
+      .eq('game_id', gameId)
+      .in('hero_id', winnerIds);
+    return {
+      result: { events: existingSemifinalEvents!, roundNumber: 6, heroSnapshots: snapshots },
+      winners: winnerHeroes || [],
+      artifactPool: null,
+    };
+  }
+
+  // 获取所有英雄
+  const { data: gameHeroes } = await supabaseAdmin
+    .from('game_heroes')
+    .select('*, hero:heroes(*)')
+    .eq('game_id', gameId)
+    .order('seat_number');
+
+  if (!gameHeroes) throw new Error('No heroes');
+
+  const alive = gameHeroes.filter((gh: any) => !gh.is_eliminated);
+  const repSorted = [...alive].sort((a: any, b: any) => (b.reputation || 0) - (a.reputation || 0));
+  const hotSorted = [...alive].sort((a: any, b: any) => (b.hot || 0) - (a.hot || 0));
+
+  // 选出四强
+  const finalistsSet = new Set<string>();
+  const finalistsList: any[] = [];
+
+  for (const gh of repSorted) {
+    if (finalistsSet.size >= FINALS_TOP_REPUTATION) break;
+    finalistsSet.add(gh.hero_id);
+    finalistsList.push(gh);
+  }
+  for (const gh of hotSorted) {
+    if (finalistsList.length >= 4) break;
+    if (finalistsSet.has(gh.hero_id)) continue;
+    finalistsSet.add(gh.hero_id);
+    finalistsList.push(gh);
+  }
+  for (const gh of repSorted) {
+    if (finalistsList.length >= 4) break;
+    if (finalistsSet.has(gh.hero_id)) continue;
+    finalistsSet.add(gh.hero_id);
+    finalistsList.push(gh);
+  }
+
+  if (finalistsList.length < 2) {
+    const champion = finalistsList[0] || alive[0];
+    const snapshots = await getHeroSnapshots(gameId);
+    return {
+      result: { events: [], roundNumber: 6, heroSnapshots: snapshots },
+      winners: champion ? [champion] : [],
+      artifactPool: null,
+    };
+  }
+
+  const events: Partial<GameEvent>[] = [];
+
+  // 四强公告
+  const names = finalistsList.map((gh: any) => gh.hero?.hero_name).join('、');
+  events.push({
+    eventType: 'director_event',
+    priority: 8,
+    narrative: `🏆 四强出炉！${names} 进入盟主争夺战！`,
+    data: { finalists: finalistsList.map((gh: any) => gh.hero_id) },
+  } as any);
+
+  // 半决赛：交叉对阵
+  const matchups = finalistsList.length >= 4
+    ? [[finalistsList[0], finalistsList[3]], [finalistsList[1], finalistsList[2]]]
+    : [[finalistsList[0], finalistsList[1]]];
+
+  const winners: any[] = [];
+
+  for (const [hero1gh, hero2gh] of matchups) {
+    const h1 = hero1gh.hero;
+    const h2 = hero2gh.hero;
+    let h1Hp = hero1gh.hp;
+    let h2Hp = hero2gh.hp;
+
+    events.push({
+      eventType: 'director_event',
+      priority: 7,
+      heroId: hero1gh.hero_id,
+      targetHeroId: hero2gh.hero_id,
+      narrative: `⚔️ 半决赛！${h1.hero_name}（HP:${h1Hp}）对阵 ${h2.hero_name}（HP:${h2Hp}）！`,
+      data: { phase: 'semifinal' },
+    } as any);
+
+    for (let r = 1; r <= FINALS_ROUNDS; r++) {
+      const [res1, res2] = await Promise.all([
+        getFinalsMove(hero1gh, h2.hero_name),
+        getFinalsMove(hero2gh, h1.hero_name),
+      ]);
+
+      const move1 = res1.move;
+      const move2 = res2.move;
+      const moveName1 = getMoveName(h1.npc_template_id, h1.faction, move1);
+      const moveName2 = getMoveName(h2.npc_template_id, h2.faction, move2);
+
+      const result = resolveFinalsRound({
+        move1, move2,
+        hero1Attrs: { strength: h1.strength, wisdom: h1.wisdom, innerForce: h1.inner_force },
+        hero2Attrs: { strength: h2.strength, wisdom: h2.wisdom, innerForce: h2.inner_force },
+        hero1Credit: hero1gh.credit || 50,
+        hero2Credit: hero2gh.credit || 50,
+      });
+
+      h1Hp = Math.max(0, h1Hp + result.hero1HpDelta);
+      h2Hp = Math.max(0, h2Hp + result.hero2HpDelta);
+
+      events.push({
+        eventType: 'fight', priority: 5,
+        heroId: hero1gh.hero_id,
+        narrative: getReadyNarrative(h1.hero_name, moveName1, move1),
+        innerThought: getInnerThought(h1.npc_template_id, h1.personality_type),
+        taunt: res1.taunt,
+        data: { phase: 'semifinal', round: r, move: move1 },
+      } as any);
+
+      events.push({
+        eventType: 'fight', priority: 5,
+        heroId: hero2gh.hero_id,
+        narrative: getReadyNarrative(h2.hero_name, moveName2, move2),
+        innerThought: getInnerThought(h2.npc_template_id, h2.personality_type),
+        taunt: res2.taunt,
+        data: { phase: 'semifinal', round: r, move: move2 },
+      } as any);
+
+      const clashText = getClashNarrative(
+        h1.hero_name, h2.hero_name,
+        moveName1, moveName2, move1, move2, result.result,
+      );
+
+      if (result.hero1HpDelta < 0 && result.hero2HpDelta < 0) {
+        events.push({
+          eventType: 'fight', priority: 7,
+          heroId: hero1gh.hero_id, targetHeroId: hero2gh.hero_id,
+          narrative: clashText, hpDelta: result.hero2HpDelta,
+          data: { round: r, move1, move2, result: result.result, h1Hp, h2Hp },
+        } as any);
+        events.push({
+          eventType: 'fight', priority: 5,
+          heroId: hero2gh.hero_id, targetHeroId: hero1gh.hero_id,
+          narrative: `${h1.hero_name}也被反震之力波及！`,
+          hpDelta: result.hero1HpDelta,
+          data: { round: r, aftershock: true },
+        } as any);
+      } else if (result.hero2HpDelta < 0) {
+        events.push({
+          eventType: 'fight', priority: 7,
+          heroId: hero1gh.hero_id, targetHeroId: hero2gh.hero_id,
+          narrative: clashText, taunt: getWinTaunt(h1.npc_template_id),
+          hpDelta: result.hero2HpDelta,
+          data: { round: r, move1, move2, result: result.result, h1Hp, h2Hp },
+        } as any);
+      } else if (result.hero1HpDelta < 0) {
+        events.push({
+          eventType: 'fight', priority: 7,
+          heroId: hero2gh.hero_id, targetHeroId: hero1gh.hero_id,
+          narrative: clashText, taunt: getWinTaunt(h2.npc_template_id),
+          hpDelta: result.hero1HpDelta,
+          data: { round: r, move1, move2, result: result.result, h1Hp, h2Hp },
+        } as any);
+      } else {
+        events.push({
+          eventType: 'fight', priority: 6,
+          heroId: hero1gh.hero_id, targetHeroId: hero2gh.hero_id,
+          narrative: clashText,
+          data: { round: r, move1, move2, result: result.result, h1Hp, h2Hp },
+        } as any);
+      }
+
+      if (h1Hp <= 0 || h2Hp <= 0) break;
+    }
+
+    // 判定胜者
+    let winner, loser;
+    if (h1Hp > h2Hp) { winner = hero1gh; loser = hero2gh; }
+    else if (h2Hp > h1Hp) { winner = hero2gh; loser = hero1gh; }
+    else {
+      winner = (hero1gh.reputation || 0) >= (hero2gh.reputation || 0) ? hero1gh : hero2gh;
+      loser = winner === hero1gh ? hero2gh : hero1gh;
+    }
+
+    winners.push(winner);
+
+    events.push({
+      eventType: 'fight', priority: 8,
+      heroId: winner.hero_id, targetHeroId: loser.hero_id,
+      narrative: `🎉 ${winner.hero.hero_name} 击败 ${loser.hero.hero_name}，晋级决赛！`,
+      taunt: getWinTaunt(winner.hero.npc_template_id),
+      innerThought: getLoseReaction(loser.hero.npc_template_id),
+      data: { phase: 'semifinal_result' },
+    } as any);
+
+    await supabaseAdmin.from('game_heroes').update({ hp: h1Hp }).eq('id', hero1gh.id);
+    await supabaseAdmin.from('game_heroes').update({ hp: h2Hp }).eq('id', hero2gh.id);
+  }
+
+  // 写入事件
+  if (events.length > 0) {
+    await supabaseAdmin.from('game_events').insert(
+      events.map((e, i) => ({
+        game_id: gameId,
+        round: 7,
+        sequence: i,
+        event_type: e.eventType,
+        priority: e.priority || 1,
+        hero_id: e.heroId || null,
+        target_hero_id: e.targetHeroId || null,
+        narrative: e.narrative || '',
+        taunt: e.taunt || null,
+        inner_thought: e.innerThought || null,
+        data: e.data || {},
+        hp_delta: e.hpDelta || 0,
+      }))
+    );
+  }
+
+  // 构建 artifactPool（如果有两个胜者）
+  let artifactPool = null;
+  if (winners.length >= 2) {
+    const shuffled = [...ARTIFACTS].sort(() => Math.random() - 0.5);
+    const selectedArtifacts = shuffled.slice(0, ARTIFACT_POOL_SIZE);
+
+    const { data: betSum } = await supabaseAdmin
+      .from('bets').select('amount').eq('game_id', gameId);
+    const introBetTotal = (betSum || []).reduce((s: number, b: any) => s + (b.amount || 0), 0);
+
+    artifactPool = {
+      finalists: winners.map((w: any) => ({
+        heroId: w.hero_id,
+        heroName: w.hero.hero_name,
+        totalValue: 0, giftCount: 0, artifacts: [],
+      })),
+      availableArtifacts: selectedArtifacts,
+      totalPrizePool: introBetTotal,
+      introBetTotal,
+      isOpen: true,
+    };
+  }
+
+  const finalSnapshots = await getHeroSnapshots(gameId);
+  console.log(`[FinalsEngine] ✓ semifinals done in ${Date.now()-t0}ms, ${events.length} events, ${winners.length} winners`);
+
+  return {
+    result: { events, roundNumber: 6, heroSnapshots: finalSnapshots },
+    winners,
+    artifactPool,
+  };
+}
+
+/**
+ * 决赛核心：两位决赛选手 RPS 对决。
+ * 不改 games.status，不更新 game_state 缓存。
+ */
+export async function processFinalCore(gameId: string): Promise<{
+  result: RoundResult;
+  championId: string | null;
+  runnerUpId: string | null;
+}> {
+  console.log(`[FinalsEngine] ▶ processFinalCore game=${gameId.slice(0,8)}`);
+  const t0 = Date.now();
+
+  // 获取决赛选手（从 artifact_pool 中读取）
+  const { data: gs } = await supabaseAdmin
+    .from('game_state').select('artifact_pool').eq('id', 'current').single();
+
+  const artifactPool = gs?.artifact_pool;
+  const finalistIds = (artifactPool?.finalists || []).map((f: any) => f.heroId);
+
+  if (finalistIds.length < 2) {
+    const snapshots = await getHeroSnapshots(gameId);
+    return { result: { events: [], roundNumber: 7, heroSnapshots: snapshots }, championId: finalistIds[0] || null, runnerUpId: null };
+  }
+
+  const { data: gameHeroes } = await supabaseAdmin
+    .from('game_heroes')
+    .select('*, hero:heroes(*)')
+    .eq('game_id', gameId)
+    .in('hero_id', finalistIds);
+
+  if (!gameHeroes || gameHeroes.length < 2) {
+    const snapshots = await getHeroSnapshots(gameId);
+    return { result: { events: [], roundNumber: 7, heroSnapshots: snapshots }, championId: null, runnerUpId: null };
+  }
+
+  const f1gh = gameHeroes.find((gh: any) => gh.hero_id === finalistIds[0])!;
+  const f2gh = gameHeroes.find((gh: any) => gh.hero_id === finalistIds[1])!;
+  const f1 = f1gh.hero;
+  const f2 = f2gh.hero;
+
+  // 查询神器赠礼
+  const { data: gifts } = await supabaseAdmin
+    .from('artifact_gifts').select('*').eq('game_id', gameId);
+
+  const ARTIFACTS_MAP = new Map<string, any>(
+    (artifactPool?.availableArtifacts || []).map((a: any) => [a.id, a])
+  );
+
+  const mergeArtifactEffects = (heroId: string): ArtifactEffect => {
+    const merged: ArtifactEffect = {};
+    for (const g of (gifts || [])) {
+      if (g.hero_id !== heroId) continue;
+      const def = ARTIFACTS_MAP.get(g.artifact_id);
+      if (!def) continue;
+      const eff = def.effect as ArtifactEffect;
+      if (eff.attackBoost) merged.attackBoost = (merged.attackBoost || 0) + eff.attackBoost;
+      if (eff.defenseBoost) merged.defenseBoost = (merged.defenseBoost || 0) + eff.defenseBoost;
+      if (eff.hpBonus) merged.hpBonus = (merged.hpBonus || 0) + eff.hpBonus;
+      if (eff.ultimateBoost) merged.ultimateBoost = (merged.ultimateBoost || 0) + eff.ultimateBoost;
+      if (eff.bluffBoost) merged.bluffBoost = (merged.bluffBoost || 0) + eff.bluffBoost;
+      if (eff.damageReduction) merged.damageReduction = (merged.damageReduction || 0) + eff.damageReduction;
+    }
+    return merged;
+  };
+
+  const hero1Artifacts = mergeArtifactEffects(f1gh.hero_id);
+  const hero2Artifacts = mergeArtifactEffects(f2gh.hero_id);
+
+  let f1Hp = f1gh.hp + (hero1Artifacts.hpBonus || 0);
+  let f2Hp = f2gh.hp + (hero2Artifacts.hpBonus || 0);
+
+  const events: Partial<GameEvent>[] = [];
+
+  // 神器加成播报
+  const artifactNarrative = [];
+  if (hero1Artifacts.hpBonus || hero1Artifacts.attackBoost || hero1Artifacts.defenseBoost) {
+    artifactNarrative.push(`${f1.hero_name}获得观众神兵加持！`);
+  }
+  if (hero2Artifacts.hpBonus || hero2Artifacts.attackBoost || hero2Artifacts.defenseBoost) {
+    artifactNarrative.push(`${f2.hero_name}获得观众神兵加持！`);
+  }
+
+  const openingTemplates = [
+    `🏆 风云际会，巅峰对决！${f1.hero_name}（HP:${f1Hp}）对阵 ${f2.hero_name}（HP:${f2Hp}）！${artifactNarrative.length > 0 ? artifactNarrative.join('') : ''}武林盟主之位，今日花落谁家？天下瞩目！`,
+    `🏆 鼓声雷动，万众屏息！${f1.hero_name}（HP:${f1Hp}）vs ${f2.hero_name}（HP:${f2Hp}）！${artifactNarrative.length > 0 ? artifactNarrative.join('') : ''}两大高手巅峰对决，武林盟主之争，一触即发！`,
+    `🏆 龙虎相争，一决雌雄！${f1.hero_name}（HP:${f1Hp}）迎战 ${f2.hero_name}（HP:${f2Hp}）！${artifactNarrative.length > 0 ? artifactNarrative.join('') : ''}谁能笑到最后，傲立武林之巅？`,
+  ];
+  events.push({
+    eventType: 'director_event', priority: 8,
+    narrative: openingTemplates[Math.floor(Math.random() * openingTemplates.length)],
+    data: { phase: 'final', hero1Artifacts, hero2Artifacts },
+  } as any);
+
+  // 3回合RPS战斗
+  for (let r = 1; r <= FINALS_ROUNDS; r++) {
+    const [res1, res2] = await Promise.all([
+      getFinalsMove(f1gh, f2.hero_name),
+      getFinalsMove(f2gh, f1.hero_name),
+    ]);
+
+    const move1 = res1.move;
+    const move2 = res2.move;
+    const moveName1 = getMoveName(f1.npc_template_id, f1.faction, move1);
+    const moveName2 = getMoveName(f2.npc_template_id, f2.faction, move2);
+
+    const result = resolveFinalsRound({
+      move1, move2,
+      hero1Attrs: { strength: f1.strength, wisdom: f1.wisdom, innerForce: f1.inner_force },
+      hero2Attrs: { strength: f2.strength, wisdom: f2.wisdom, innerForce: f2.inner_force },
+      hero1Credit: f1gh.credit || 50,
+      hero2Credit: f2gh.credit || 50,
+      hero1Artifacts, hero2Artifacts,
+    });
+
+    f1Hp = Math.max(0, f1Hp + result.hero1HpDelta);
+    f2Hp = Math.max(0, f2Hp + result.hero2HpDelta);
+
+    events.push({
+      eventType: 'fight', priority: 6,
+      heroId: f1gh.hero_id,
+      narrative: `🏆 ${getReadyNarrative(f1.hero_name, moveName1, move1)}`,
+      innerThought: getInnerThought(f1.npc_template_id, f1.personality_type),
+      taunt: res1.taunt,
+      data: { phase: 'final', round: r, move: move1 },
+    } as any);
+
+    events.push({
+      eventType: 'fight', priority: 6,
+      heroId: f2gh.hero_id,
+      narrative: `🏆 ${getReadyNarrative(f2.hero_name, moveName2, move2)}`,
+      innerThought: getInnerThought(f2.npc_template_id, f2.personality_type),
+      taunt: res2.taunt,
+      data: { phase: 'final', round: r, move: move2 },
+    } as any);
+
+    const clashText = `🏆 决赛第${r}招！` + getClashNarrative(
+      f1.hero_name, f2.hero_name,
+      moveName1, moveName2, move1, move2, result.result,
+    );
+
+    if (result.hero1HpDelta < 0 && result.hero2HpDelta < 0) {
+      events.push({
+        eventType: 'fight', priority: 8,
+        heroId: f1gh.hero_id, targetHeroId: f2gh.hero_id,
+        narrative: clashText, hpDelta: result.hero2HpDelta,
+        data: { round: r, move1, move2, result: result.result, f1Hp, f2Hp },
+      } as any);
+      events.push({
+        eventType: 'fight', priority: 6,
+        heroId: f2gh.hero_id, targetHeroId: f1gh.hero_id,
+        narrative: `${f1.hero_name}也被反震之力波及！`,
+        hpDelta: result.hero1HpDelta,
+        data: { round: r, aftershock: true },
+      } as any);
+    } else if (result.hero2HpDelta < 0) {
+      events.push({
+        eventType: 'fight', priority: 8,
+        heroId: f1gh.hero_id, targetHeroId: f2gh.hero_id,
+        narrative: clashText, taunt: getWinTaunt(f1.npc_template_id),
+        hpDelta: result.hero2HpDelta,
+        data: { round: r, move1, move2, result: result.result, f1Hp, f2Hp },
+      } as any);
+    } else if (result.hero1HpDelta < 0) {
+      events.push({
+        eventType: 'fight', priority: 8,
+        heroId: f2gh.hero_id, targetHeroId: f1gh.hero_id,
+        narrative: clashText, taunt: getWinTaunt(f2.npc_template_id),
+        hpDelta: result.hero1HpDelta,
+        data: { round: r, move1, move2, result: result.result, f1Hp, f2Hp },
+      } as any);
+    } else {
+      events.push({
+        eventType: 'fight', priority: 7,
+        heroId: f1gh.hero_id, targetHeroId: f2gh.hero_id,
+        narrative: clashText,
+        data: { round: r, move1, move2, result: result.result, f1Hp, f2Hp },
+      } as any);
+    }
+
+    if (f1Hp <= 0 || f2Hp <= 0) break;
+  }
+
+  // 判定盟主
+  let champion, runnerUp;
+  if (f1Hp > f2Hp) { champion = f1gh; runnerUp = f2gh; }
+  else if (f2Hp > f1Hp) { champion = f2gh; runnerUp = f1gh; }
+  else {
+    champion = (f1gh.reputation || 0) >= (f2gh.reputation || 0) ? f1gh : f2gh;
+    runnerUp = champion === f1gh ? f2gh : f1gh;
+  }
+
+  const championTemplates = [
+    `🏆🏆🏆 ${champion.hero.hero_name} 击败 ${runnerUp.hero.hero_name}，荣登武林盟主！天下第一！`,
+    `🏆🏆🏆 尘埃落定！${champion.hero.hero_name} 力克 ${runnerUp.hero.hero_name}，傲立群雄之巅！新一代武林盟主诞生！`,
+    `🏆🏆🏆 ${champion.hero.hero_name} 一战封神！${runnerUp.hero.hero_name} 虽败犹荣，但今日的武林，只有一个王者！`,
+  ];
+  events.push({
+    eventType: 'champion', priority: 8,
+    heroId: champion.hero_id,
+    narrative: championTemplates[Math.floor(Math.random() * championTemplates.length)],
+    taunt: getWinTaunt(champion.hero.npc_template_id),
+    innerThought: getLoseReaction(runnerUp.hero.npc_template_id),
+    data: { championHeroId: champion.hero_id, runnerUpHeroId: runnerUp.hero_id },
+  } as any);
+
+  // 写入事件（sequence 从已有事件之后）
+  const { count: existingCount } = await supabaseAdmin
+    .from('game_events')
+    .select('*', { count: 'exact', head: true })
+    .eq('game_id', gameId)
+    .eq('round', 7);
+
+  const seqOffset = existingCount || 0;
+
+  if (events.length > 0) {
+    await supabaseAdmin.from('game_events').insert(
+      events.map((e, i) => ({
+        game_id: gameId,
+        round: 7,
+        sequence: seqOffset + i,
+        event_type: e.eventType,
+        priority: e.priority || 1,
+        hero_id: e.heroId || null,
+        target_hero_id: e.targetHeroId || null,
+        narrative: e.narrative || '',
+        taunt: e.taunt || null,
+        inner_thought: e.innerThought || null,
+        data: e.data || {},
+        hp_delta: e.hpDelta || 0,
+      }))
+    );
+  }
+
+  const finalSnapshots = await getHeroSnapshots(gameId);
+  console.log(`[FinalsEngine] ✓ final done in ${Date.now()-t0}ms, ${events.length} events`);
+
+  return {
+    result: { events, roundNumber: 7, heroSnapshots: finalSnapshots },
+    championId: champion.hero_id,
+    runnerUpId: runnerUp.hero_id,
+  };
+}
+
+// 获取决赛出招（复用自 finals/final 的逻辑）
+async function getFinalsMove(gh: any, opponentName: string): Promise<{ move: FinalsMove; taunt: string }> {
+  const hero = gh.hero;
+  const validMoves: FinalsMove[] = ['attack', 'defend', 'ultimate', 'bluff'];
+
+  if (hero.is_npc) {
+    const template = NPC_TEMPLATES.find(t => t.id === hero.npc_template_id);
+    let move: FinalsMove;
+    if (template) {
+      if (template.alwaysFightStrongest) move = 'attack';
+      else if (template.neverFight) move = Math.random() < 0.6 ? 'defend' : 'bluff';
+      else if (template.personalityType === 'aggressive') move = Math.random() < 0.5 ? 'attack' : 'ultimate';
+      else if (template.personalityType === 'cautious') move = Math.random() < 0.5 ? 'defend' : 'attack';
+      else if (template.personalityType === 'cunning') move = Math.random() < 0.4 ? 'bluff' : 'attack';
+      else move = validMoves[Math.floor(Math.random() * validMoves.length)];
+    } else {
+      move = validMoves[Math.floor(Math.random() * validMoves.length)];
+    }
+    const taunt = template?.signatureLines?.[Math.floor(Math.random() * (template?.signatureLines?.length || 1))] || '……';
+    return { move, taunt };
+  }
+
+  try {
+    const client = new SecondMeClient(hero.access_token || '');
+    const prompt = finalsPrompt({
+      heroId: gh.hero_id, heroName: hero.hero_name, faction: hero.faction,
+      personalityType: hero.personality_type, hp: gh.hp, maxHp: INITIAL_HP,
+      seatNumber: gh.seat_number, reputation: gh.reputation || 0, hot: gh.hot || 0,
+      morality: gh.morality || 50, credit: gh.credit || 50, isEliminated: false,
+      allyHeroId: null, allyHeroName: null, martialArts: gh.martial_arts || [],
+      hasDeathPact: gh.has_death_pact || false, isNpc: false,
+      catchphrase: hero.catchphrase || '', avatarUrl: hero.avatar_url,
+      strength: hero.strength, innerForce: hero.inner_force, agility: hero.agility,
+      wisdom: hero.wisdom, constitution: hero.constitution, charisma: hero.charisma,
+    }, opponentName);
+
+    const raw = await client.act(prompt);
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]);
+        if (validMoves.includes(parsed.move)) return { move: parsed.move, taunt: parsed.taunt || '……' };
+      }
+    } catch { /* fallback */ }
+    const moveMatch = raw.match(/"move"\s*:\s*"(\w+)"/);
+    if (moveMatch && validMoves.includes(moveMatch[1] as FinalsMove)) {
+      const tauntMatch = raw.match(/"taunt"\s*:\s*"([^"]+)"/);
+      return { move: moveMatch[1] as FinalsMove, taunt: tauntMatch?.[1] || '……' };
+    }
+  } catch { /* fallback */ }
+
+  return { move: validMoves[Math.floor(Math.random() * validMoves.length)], taunt: '……' };
+}

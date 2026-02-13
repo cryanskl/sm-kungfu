@@ -78,13 +78,93 @@ export async function prefetchDecisions(gameId: string, roundNumber: number): Pr
 // 游戏引擎
 // ============================================================
 
-interface RoundResult {
+export interface RoundResult {
   events: Partial<GameEvent>[];
   roundNumber: number;
   heroSnapshots: GameHeroSnapshot[];
 }
 
-// --- 处理一个回合（幂等）---
+/**
+ * 核心回合处理逻辑（不含状态锁和 game_state 缓存更新）。
+ * 用于批处理模式（run-all）中顺序处理 R1-R5。
+ */
+export async function processRoundCore(gameId: string, roundNumber: number): Promise<RoundResult> {
+  const t0 = Date.now();
+  console.log(`[Engine] ▶ processRoundCore game=${gameId.slice(0,8)} round=${roundNumber}`);
+
+  // 幂等：检查是否已有该回合事件
+  const { data: existingEvents } = await supabaseAdmin
+    .from('game_events')
+    .select('*')
+    .eq('game_id', gameId)
+    .eq('round', roundNumber)
+    .order('sequence', { ascending: true });
+
+  if (existingEvents && existingEvents.length > 0) {
+    console.log(`[Engine] ■ round=${roundNumber} already has ${existingEvents.length} events (idempotent)`);
+    const snapshots = await getHeroSnapshots(gameId);
+    return { events: existingEvents, roundNumber, heroSnapshots: snapshots };
+  }
+
+  // 获取所有英雄状态
+  const { data: gameHeroes } = await supabaseAdmin
+    .from('game_heroes')
+    .select('*, hero:heroes(*)')
+    .eq('game_id', gameId)
+    .order('seat_number');
+
+  if (!gameHeroes || gameHeroes.length === 0) {
+    throw new Error('No heroes in game');
+  }
+
+  const snapshots = gameHeroesToSnapshots(gameHeroes);
+
+  // 1. 收集决策（优先从预取缓存读取）
+  const key = cacheKey(gameId, roundNumber);
+  let decisions: Map<string, Decision>;
+  const cached = decisionCache.get(key);
+  if (cached) {
+    decisions = cached;
+    decisionCache.delete(key);
+    console.log(`[Engine] ⚡ round=${roundNumber} using prefetched decisions (${decisions.size} cached)`);
+  } else {
+    console.log(`[Engine] 🐢 round=${roundNumber} no prefetch cache, collecting decisions now...`);
+    decisions = await collectDecisions(gameId, roundNumber, gameHeroes, snapshots);
+  }
+
+  // 2. 结算
+  const events = await resolveRound(gameId, roundNumber, decisions, gameHeroes, snapshots);
+
+  // 3. 写入事件
+  if (events.length > 0) {
+    await supabaseAdmin.from('game_events').insert(
+      events.map((e, i) => ({
+        game_id: gameId,
+        round: roundNumber,
+        sequence: i,
+        event_type: e.eventType,
+        priority: e.priority,
+        hero_id: e.heroId,
+        target_hero_id: e.targetHeroId,
+        action: e.action,
+        data: e.data,
+        narrative: e.narrative,
+        taunt: e.taunt,
+        inner_thought: e.innerThought,
+        reputation_delta: e.reputationDelta,
+        hot_delta: e.hotDelta,
+        hp_delta: e.hpDelta,
+      }))
+    );
+  }
+
+  // 4. 获取更新后的英雄快照
+  const finalSnapshots = await getHeroSnapshots(gameId);
+  console.log(`[Engine] ✓ processRoundCore round=${roundNumber} done in ${Date.now()-t0}ms, ${events.length} events`);
+  return { events, roundNumber, heroSnapshots: finalSnapshots };
+}
+
+// --- 处理一个回合（幂等，含状态锁 + 缓存更新，兼容旧模式）---
 export async function processRound(gameId: string, roundNumber: number): Promise<RoundResult> {
   const t0 = Date.now();
   console.log(`[Engine] ▶ processRound game=${gameId.slice(0,8)} round=${roundNumber}`);
@@ -965,7 +1045,7 @@ function addMartialArt(updates: Map<string, Record<string, any>>, heroId: string
   }
 }
 
-function gameHeroesToSnapshots(gameHeroes: any[]): GameHeroSnapshot[] {
+export function gameHeroesToSnapshots(gameHeroes: any[]): GameHeroSnapshot[] {
   return gameHeroes.map((gh: any) => ({
     heroId: gh.hero_id,
     heroName: gh.hero?.hero_name || '无名',
@@ -1006,7 +1086,7 @@ export async function getHeroSnapshots(gameId: string): Promise<GameHeroSnapshot
   return data ? gameHeroesToSnapshots(data) : [];
 }
 
-async function updateGameStateCache(
+export async function updateGameStateCache(
   gameId: string,
   roundNumber: number,
   events: Partial<GameEvent>[],
