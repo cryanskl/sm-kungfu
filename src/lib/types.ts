@@ -92,7 +92,6 @@ export type GameStatus =
   | 'waiting'     // 等待入场
   | 'countdown'   // 30 秒倒计时
   | 'intro'       // 开场点名
-  | 'batch_processing' // 后台批处理中（R1-R5 + semifinals）
   | 'round_1' | 'round_2' | 'round_3' | 'round_4' | 'round_5' | 'round_6'
   | 'semifinals'  // 半决赛
   | 'artifact_selection' // 神兵助战（10秒观众投注）
@@ -221,11 +220,6 @@ export interface GameState {
 
   // 候补队列
   queueCount: number;
-
-  // 批处理同步广播
-  displayRound?: number;
-  batchProgress?: { processedThrough: number; startedAt: string; lastUpdatedAt: string };
-  displayStartedAt?: string;
 
   updatedAt: string;
 }

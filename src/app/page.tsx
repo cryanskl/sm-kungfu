@@ -12,11 +12,9 @@ import { EndedPhase } from '@/components/game/phases/EndedPhase';
 import { ArtifactSelectionPanel } from '@/components/game/ArtifactSelectionPanel';
 import { soundManager } from '@/lib/sound';
 import { bgmManager } from '@/lib/bgm';
-import { GOSSIP_LINES, LOADING_LINES, ROUND_DISPLAY_SECONDS } from '@/lib/game/constants';
+import { GOSSIP_LINES, LOADING_LINES } from '@/lib/game/constants';
 import { useEventRevealer } from '@/hooks/useEventRevealer';
 import { generateCommentary, generateWelcomeDanmaku, resetEliminationCount, generateCelebrationDanmaku } from '@/lib/game/commentary';
-
-const ROUND_DISPLAY_MS = ROUND_DISPLAY_SECONDS * 1000;
 
 export default function Home() {
   const { user, setUser, gameState, setGameState, currentEvents, setCurrentEvents, startPolling, pollNow, clearAudienceBets, clearLocalDanmaku, clearAudienceArtifact, addCommentaryDanmaku, addLocalDanmaku } = useWulinStore();
@@ -57,25 +55,36 @@ export default function Home() {
   const roundTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastTriggeredRef = useRef<string>('');
   const commentaryTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const roundTriggeredRef = useRef(false);
+  const wasRevealingRef = useRef(false);
 
-  // === 批处理模式：响应 displayRound 变化 ===
-  const prevDisplayRoundRef = useRef(0);
+  // 揭晓完毕后自动触发下一轮（核心流畅化逻辑）
   useEffect(() => {
-    const dr = gameState?.displayRound;
-    if (!dr || dr === prevDisplayRoundRef.current) return;
-    prevDisplayRoundRef.current = dr;
-
-    const events = gameState?.recentEvents || [];
-    const heroes = gameState?.heroes || [];
-    if (events.length > 0) {
-      setCurrentEvents(events);
-      setGossip(GOSSIP_LINES[Math.floor(Math.random() * GOSSIP_LINES.length)]);
-      setLoadingLine(LOADING_LINES[Math.floor(Math.random() * LOADING_LINES.length)]);
-      // 半决赛和决赛使用较短的显示时间
-      const displayMs = dr <= 5 ? ROUND_DISPLAY_MS : 20000;
-      startReveal(events, heroes, displayMs);
+    if (isRevealing) {
+      wasRevealingRef.current = true;
+      return;
     }
-  }, [gameState?.displayRound]);
+    // 只在 true→false 转换时触发，忽略初始 false
+    if (!wasRevealingRef.current) return;
+    wasRevealingRef.current = false;
+
+    const status = gameState?.status;
+    const gameId = gameState?.gameId;
+    if (!status || !gameId) return;
+
+    // round_2 ~ round_5: 揭晓完立即触发下一轮
+    if (status.startsWith('round_') && !roundTriggeredRef.current) {
+      const nextRound = parseInt(status.split('_')[1]);
+      if (!isNaN(nextRound) && nextRound >= 2 && nextRound <= 5) {
+        roundTriggeredRef.current = true;
+        // 取消备用定时器
+        if (roundTimerRef.current) { clearInterval(roundTimerRef.current); roundTimerRef.current = null; }
+        setRoundTimer(null);
+        // 1.5s 喘息后立即触发
+        timerRef.current = setTimeout(() => triggerRound(gameId, nextRound), 1500);
+      }
+    }
+  }, [isRevealing, gameState?.status, gameState?.gameId]);
 
   // === Init: 并行拉取 auth + game state，消除白屏 ===
   useEffect(() => {
@@ -112,9 +121,12 @@ export default function Home() {
       setEndedCountdown(null);
       setIsQueued(false);
       if (endedTimerRef.current) { clearInterval(endedTimerRef.current); endedTimerRef.current = null; }
+      // Only clear danmaku in waiting (not countdown — welcome danmaku live there)
       if (gameState?.status === 'waiting') clearLocalDanmaku();
     }
   }, [gameState?.status, queueInfo]);
+
+  // ended 时清空弹幕 + 事件计数器 + 定时器（逻辑合并到下方音效 prevStatusRef 中）
 
   // 新一局重置押注 + 弹幕 + 解说淘汰计数 + 事件计数器
   const prevGameIdRef = useRef<string | null>(null);
@@ -126,9 +138,9 @@ export default function Home() {
       clearAudienceArtifact();
       resetEliminationCount();
       lastEventCountRef.current = 0;
+      // 清除上一局残留的事件，防止新回合显示旧决赛结果
       setCurrentEvents([]);
       resetReveal();
-      prevDisplayRoundRef.current = 0;
     }
     prevGameIdRef.current = gid;
   }, [gameState?.gameId, clearAudienceBets, clearLocalDanmaku]);
@@ -140,15 +152,17 @@ export default function Home() {
     const status = gameState?.status;
     const heroCount = gameState?.heroes?.length ?? 0;
     if (status === 'countdown' && heroCount > prevHeroCountRef.current && prevHeroCountRef.current > 0) {
+      // New heroes seated — fire welcome danmaku for each
       const newHeroes = (gameState?.heroes || []).slice(prevHeroCountRef.current);
       newHeroes.forEach((hero, i) => {
-        const delay = i * 800;
+        const delay = i * 800; // stagger 800ms per hero
         const timer = setTimeout(() => {
           addLocalDanmaku(generateWelcomeDanmaku(hero.heroName));
         }, delay);
         welcomeTimersRef.current.push(timer);
       });
     }
+    // Reset when leaving countdown (e.g. NPC fill on intro shouldn't trigger)
     if (status !== 'countdown' && status !== 'waiting') {
       prevHeroCountRef.current = 0;
       welcomeTimersRef.current.forEach(t => clearTimeout(t));
@@ -170,8 +184,6 @@ export default function Home() {
     if (status === 'countdown' && countdown === null) {
       lastTriggeredRef.current = key;
       startCountdown(gameId, gameState?.countdownSeconds ?? 30);
-      // Countdown 开始时触发 prepare（生成 bio/宣言）
-      fetch('/api/engine/prepare', { method: 'POST' }).catch(() => {});
     }
 
     if (status === 'intro') {
@@ -188,11 +200,30 @@ export default function Home() {
           return prev - 1;
         });
       }, 1000);
-      // intro 阶段不再触发 round — run-all 会在后台自动处理
+      fetch('/api/engine/prefetch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, roundNumber: 1 }),
+      }).catch(() => {});
+      timerRef.current = setTimeout(() => triggerRound(gameId, 1), 10000); // 提前 5s 触发，减少「即将开战」等待
     }
 
-    // 批处理模式下，round_* 和 semifinals 状态由 displayRound 驱动渲染
-    // 不需要额外触发逻辑
+    if (status.startsWith('round_')) {
+      const pendingRound = parseInt(status.split('_')[1]);
+      if (!isNaN(pendingRound) && pendingRound >= 2 && pendingRound <= 5) {
+        lastTriggeredRef.current = key;
+        fetch('/api/engine/prefetch', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gameId, roundNumber: pendingRound }),
+        }).catch(() => {});
+        startRoundTimer(gameId, pendingRound, 30); // 兜底30s，正常由揭晓完毕触发
+      }
+    }
+
+    if (status === 'semifinals') {
+      lastTriggeredRef.current = key;
+      clearAllTimers();
+      timerRef.current = setTimeout(() => triggerFinals(gameId), 5000);
+    }
 
     if (status === 'artifact_selection') {
       lastTriggeredRef.current = key;
@@ -208,8 +239,7 @@ export default function Home() {
           return prev - 1;
         });
       }, 1000);
-      // 10 秒后触发决赛（使用 run-final 替代原 final）
-      timerRef.current = setTimeout(() => triggerRunFinal(gameId), 10000);
+      timerRef.current = setTimeout(() => triggerFinal(gameId), 10000);
     }
 
     if (status === 'ending') {
@@ -245,11 +275,11 @@ export default function Home() {
     }
   }, [gameState?.status, gameState?.gameId]);
 
-  // 服务器权威倒计时同步
+  // 服务器权威倒计时同步：每次轮询时用服务器返回的剩余秒数校准本地倒计时
   useEffect(() => {
     if (gameState?.status !== 'countdown') return;
     if (gameState.countdownSeconds == null) return;
-    if (countdown === null) return;
+    if (countdown === null) return; // 尚未初始化，由状态驱动器处理
     setCountdown(gameState.countdownSeconds);
   }, [gameState?.updatedAt]);
 
@@ -260,14 +290,14 @@ export default function Home() {
     }
   }, [endedCountdown]);
 
-  // artifact_selection 兜底重试
+  // artifact_selection 兜底重试：倒计时结束后 retry triggerFinal
   const finalRetryRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
     if (finalRetryRef.current) { clearInterval(finalRetryRef.current); finalRetryRef.current = null; }
     if (gameState?.status === 'artifact_selection' && gameState?.gameId && artifactTimer === 0) {
-      triggerRunFinal(gameState.gameId);
+      triggerFinal(gameState.gameId);
       const gid = gameState.gameId;
-      finalRetryRef.current = setInterval(() => { triggerRunFinal(gid); }, 3000);
+      finalRetryRef.current = setInterval(() => { triggerFinal(gid); }, 3000);
     }
     return () => { if (finalRetryRef.current) { clearInterval(finalRetryRef.current); finalRetryRef.current = null; } };
   }, [artifactTimer, gameState?.status, gameState?.gameId]);
@@ -294,6 +324,7 @@ export default function Home() {
     if (status === 'intro' && prev !== 'intro') soundManager.play('intro_drums');
     if (status === 'semifinals' || status === 'final') soundManager.play('finals');
     if (status === 'ending') {
+      // 进入封神阶段，先清空旧弹幕
       clearLocalDanmaku();
       commentaryTimersRef.current.forEach(t => clearTimeout(t));
       commentaryTimersRef.current = [];
@@ -305,6 +336,7 @@ export default function Home() {
       resetEliminationCount();
       commentaryTimersRef.current.forEach(t => clearTimeout(t));
       commentaryTimersRef.current = [];
+      // 生成庆祝弹幕，均匀分散在 3-40 秒内，每条间隔 ≥3s
       const celebrations = generateCelebrationDanmaku(gameState?.championName || undefined);
       celebrations.forEach((item, i) => {
         const delay = 3000 + i * 4000 + Math.floor(Math.random() * 2000);
@@ -323,7 +355,7 @@ export default function Home() {
   useEffect(() => { bgmManager.muted = isMuted; }, [isMuted]);
   useEffect(() => () => bgmManager.destroy(), []);
 
-  // Sound effects on new events
+  // Sound effects on new events (separate from commentary)
   const lastEventCountRef = useRef(0);
   useEffect(() => {
     const evts = gameState?.recentEvents || [];
@@ -341,6 +373,7 @@ export default function Home() {
   const lastRevealedCountRef = useRef(0);
   const prevIsRevealingRef = useRef(false);
   useEffect(() => {
+    // Reset counter when a new reveal session starts
     if (isRevealing && !prevIsRevealingRef.current) {
       lastRevealedCountRef.current = 0;
       commentaryTimersRef.current.forEach(t => clearTimeout(t));
@@ -352,10 +385,12 @@ export default function Home() {
     const count = revealedEvents.length;
     if (count <= lastRevealedCountRef.current) return;
 
+    // Process newly revealed events
     const newEvts = revealedEvents.slice(lastRevealedCountRef.current);
     lastRevealedCountRef.current = count;
     const heroes = gameState?.heroes || [];
 
+    // 每批最多生成 2 条解说弹幕，间隔 ≥2s，防止刷屏
     let commentaryGenerated = 0;
     for (const e of newEvts) {
       if (commentaryGenerated >= 2) break;
@@ -382,16 +417,34 @@ export default function Home() {
   function startCountdown(gameId: string, initialSeconds?: number) {
     setCountdown(initialSeconds ?? 30);
     if (countdownRef.current) clearInterval(countdownRef.current);
-    const startedRef = { called: false };
     countdownRef.current = setInterval(() => {
       setCountdown(prev => {
         if (prev === null || prev <= 1) {
           if (countdownRef.current) clearInterval(countdownRef.current);
-          if (!startedRef.called) { startedRef.called = true; triggerStart(gameId); }
+          triggerStart(gameId); // 兜底：如果提前触发失败
           return 0;
         }
-        // 提前 5 秒触发 start（减少感知延迟），幂等锁保证只处理一次
-        if (prev === 5 && !startedRef.called) { startedRef.called = true; triggerStart(gameId); }
+        if (prev === 5) triggerStart(gameId); // 提前 5s 触发，减少「开战中」等待
+        return prev - 1;
+      });
+    }, 1000);
+  }
+
+  function startRoundTimer(gameId: string, nextRound: number, seconds: number) {
+    // 仅用作安全兜底 — 正常流程由揭晓完毕 effect 驱动
+    setRoundTimer(seconds);
+    roundTriggeredRef.current = false;
+    if (roundTimerRef.current) clearInterval(roundTimerRef.current);
+    roundTimerRef.current = setInterval(() => {
+      setRoundTimer(prev => {
+        if (prev === null || prev <= 1) {
+          if (roundTimerRef.current) clearInterval(roundTimerRef.current);
+          if (!roundTriggeredRef.current) {
+            roundTriggeredRef.current = true;
+            triggerRound(gameId, nextRound);
+          }
+          return null;
+        }
         return prev - 1;
       });
     }, 1000);
@@ -452,12 +505,40 @@ export default function Home() {
     setIsProcessing(false);
   }, [isProcessing, setGameState, pollNow]);
 
-  const triggerRunFinal = useCallback(async (gameId: string) => {
+  const triggerRound = useCallback(async (gameId: string, roundNumber: number) => {
     if (isProcessing) return;
     setIsProcessing(true);
+    setGossip(GOSSIP_LINES[Math.floor(Math.random() * GOSSIP_LINES.length)]);
+    setLoadingLine(LOADING_LINES[Math.floor(Math.random() * LOADING_LINES.length)]);
     const snapshot = useWulinStore.getState().gameState?.heroes || [];
     try {
-      const res = await fetch('/api/engine/run-final', {
+      const res = await fetch('/api/engine/round', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, roundNumber }),
+      });
+      const data = await res.json();
+      if (data.gameState) setGameState(data.gameState);
+      else pollNow();
+      // 优先用 API 返回的事件；若被节流（events=[]），回退到 gameState 缓存事件
+      const evts = (data.events && data.events.length > 0)
+        ? data.events
+        : (data.gameState?.recentEvents || []);
+      if (evts.length > 0) {
+        setCurrentEvents(evts);
+        startReveal(evts, snapshot, 35000);
+      }
+    } catch (e) { console.error('Round error:', e); pollNow(); }
+    setIsProcessing(false);
+  }, [isProcessing, startReveal, setGameState, pollNow]);
+
+  const triggerFinals = useCallback(async (gameId: string) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+    setLoadingLine(LOADING_LINES[Math.floor(Math.random() * LOADING_LINES.length)]);
+    const snapshot = useWulinStore.getState().gameState?.heroes || [];
+    try {
+      const res = await fetch('/api/engine/finals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ gameId }),
@@ -472,7 +553,31 @@ export default function Home() {
         setCurrentEvents(evts);
         startReveal(evts, snapshot, 10000);
       }
-    } catch (e) { console.error('Run-final error:', e); pollNow(); }
+    } catch (e) { console.error('Finals error:', e); pollNow(); }
+    setIsProcessing(false);
+  }, [isProcessing, startReveal, setGameState, pollNow]);
+
+  const triggerFinal = useCallback(async (gameId: string) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+    const snapshot = useWulinStore.getState().gameState?.heroes || [];
+    try {
+      const res = await fetch('/api/engine/final', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId }),
+      });
+      const data = await res.json();
+      if (data.gameState) setGameState(data.gameState);
+      else pollNow();
+      const evts = (data.events && data.events.length > 0)
+        ? data.events
+        : (data.gameState?.recentEvents || []);
+      if (evts.length > 0) {
+        setCurrentEvents(evts);
+        startReveal(evts, snapshot, 10000);
+      }
+    } catch (e) { console.error('Final error:', e); pollNow(); }
     setIsProcessing(false);
   }, [isProcessing, startReveal, setGameState, pollNow]);
 
@@ -508,7 +613,7 @@ export default function Home() {
     status === 'intro' || status === 'semifinals' || status === 'artifact_selection' || status === 'final' || status === 'ending';
   const isParticipant = user.isLoggedIn && gameState?.heroes?.some(h => h.heroId === user.heroId);
 
-  // 初始加载骨架屏
+  // 初始加载骨架屏 — 数据到达前立即展示，避免白屏
   if (isInitLoading) {
     return (
       <div className="h-dvh flex flex-col items-center justify-center bg-[--bg-primary)]">
@@ -625,7 +730,6 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between text-xs text-[--text-dim]">
           <span className="tabular-nums">
             {status} · R{gameState?.currentRound || 0}
-            {gameState?.displayRound ? ` · DR${gameState.displayRound}` : ''}
             {gameState?.heroes?.length ? ` · ${gameState.heroes.filter(h => !h.isEliminated).length}人存活` : ''}
           </span>
           <span>
