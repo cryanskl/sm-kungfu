@@ -12,6 +12,9 @@ export const maxDuration = 60;
 /**
  * Countdown 期间调用：填充 NPC、生成背景故事 + 开场宣言。
  * 提前完成耗时操作，让后续 start API 几乎瞬间完成。
+ *
+ * 重要：不修改 games.status（避免阻塞 start API 的乐观锁）。
+ * 使用 game_state.batch_progress.prepareStatus 作为幂等锁。
  */
 export async function POST(request: NextRequest) {
   try {
@@ -31,19 +34,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No game waiting' }, { status: 400 });
     }
 
-    // 幂等锁：设置 preparing 状态防止重复调用
-    const { data: lockedGame, error: lockErr } = await supabaseAdmin
-      .from('games')
-      .update({ status: 'preparing' })
-      .eq('id', currentGame.id)
-      .in('status', ['waiting', 'countdown'])
-      .select()
+    // 幂等锁：通过 game_state.batch_progress.prepareStatus 防止重复调用
+    // 不修改 games.status，这样 start API 随时可以锁定
+    const { data: gs } = await supabaseAdmin
+      .from('game_state')
+      .select('batch_progress')
+      .eq('id', 'current')
       .single();
 
-    if (lockErr || !lockedGame) {
-      // 已被其他请求处理，直接返回
+    const currentBatchProgress = gs?.batch_progress || {};
+    if (currentBatchProgress.prepareStatus === 'running' || currentBatchProgress.prepareStatus === 'done') {
       return NextResponse.json({ gameId: currentGame.id, status: 'already_preparing' });
     }
+
+    // 标记 prepare 开始（不阻塞主状态机）
+    await supabaseAdmin.from('game_state').update({
+      batch_progress: { ...currentBatchProgress, prepareStatus: 'running' },
+      updated_at: new Date().toISOString(),
+    }).eq('id', 'current');
 
     // 获取已入座的英雄
     const { data: existingHeroes } = await supabaseAdmin
@@ -53,8 +61,6 @@ export async function POST(request: NextRequest) {
 
     const humanCount = existingHeroes?.filter((gh: any) => !gh.hero?.is_npc).length || 0;
     if (humanCount === 0) {
-      // 回滚状态
-      await supabaseAdmin.from('games').update({ status: 'waiting' }).eq('id', currentGame.id);
       return NextResponse.json({ error: 'No human players' }, { status: 400 });
     }
 
@@ -107,21 +113,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 选主题
-    const theme = GAME_THEMES[Math.floor(Math.random() * GAME_THEMES.length)];
-
-    // 获取局数
+    // 选主题 + 局数（写入 games 表，不改 status）
+    const theme = currentGame.theme || GAME_THEMES[Math.floor(Math.random() * GAME_THEMES.length)];
     const { count } = await supabaseAdmin
       .from('games')
       .select('*', { count: 'exact', head: true })
       .eq('status', 'ended');
-    const gameNumber = (count || 0) + 1;
+    const gameNumber = currentGame.game_number || (count || 0) + 1;
 
-    // 更新游戏基本信息（保持 countdown 状态）
+    // 保存 theme 和 game_number，不改 status，不改 countdown_started_at
     await supabaseAdmin.from('games').update({
       theme,
       game_number: gameNumber,
-      countdown_started_at: new Date().toISOString(),
     }).eq('id', currentGame.id);
 
     // 获取所有英雄（含刚插入的 NPC）
@@ -258,31 +261,14 @@ export async function POST(request: NextRequest) {
       };
     }) || [];
 
-    // 回到 countdown 状态（带已生成的数据），让 start 能正常锁定
-    await supabaseAdmin.from('games').update({
-      status: 'countdown',
-    }).eq('id', currentGame.id);
-
-    // 更新 game_state 缓存（英雄带上已生成的 bio）
-    await supabaseAdmin.from('game_state').upsert({
-      id: 'current',
-      game_id: currentGame.id,
-      status: 'countdown',
-      current_round: 0,
-      phase: 'waiting',
+    // 更新 game_state 缓存（英雄带上已生成的 bio），保留原有 countdown_started_at
+    await supabaseAdmin.from('game_state').update({
+      heroes: heroSnapshots,
       theme,
       game_number: gameNumber,
-      heroes: heroSnapshots,
-      recent_events: [],
-      reputation_ranking: [],
-      hot_ranking: [],
-      next_round_preview: '第一回合：残卷落地',
-      betting_pool: { totalPool: 0, heroPools: {}, isOpen: true },
-      danmaku: [],
-      audience_influence: {},
-      countdown_started_at: new Date().toISOString(),
+      batch_progress: { prepareStatus: 'done' },
       updated_at: new Date().toISOString(),
-    });
+    }).eq('id', 'current');
 
     return NextResponse.json({
       gameId: currentGame.id,

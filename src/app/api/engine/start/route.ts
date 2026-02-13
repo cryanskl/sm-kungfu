@@ -199,8 +199,8 @@ export async function POST(request: NextRequest) {
       betting_pool: { totalPool: 0, heroPools: {}, isOpen: true },
       danmaku: [],
       audience_influence: {},
-      batch_progress: {},
-      display_started_at: null,
+      batch_progress: { processedThrough: 0 },
+      display_started_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
 

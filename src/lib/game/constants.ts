@@ -20,25 +20,31 @@ export const ENDING_DURATION = 25;
 export const BETWEEN_GAMES_DURATION = 30;
 
 // --- 批处理显示时长（秒）：前端按时间线渲染预计算结果 ---
-export const ROUND_DISPLAY_SECONDS = 35;       // R1-R5 每回合显示
+export const INTRO_DISPLAY_SECONDS = 15;        // intro 展示（时间线第一段）
+export const ROUND_DISPLAY_SECONDS = 35;        // R1-R5 每回合显示
 export const SEMIFINALS_DISPLAY_SECONDS = 20;   // 半决赛显示
 export const FINAL_DISPLAY_SECONDS = 20;        // 决赛显示
 export const ENDING_DISPLAY_SECONDS = 15;       // 封神榜显示
 
 /**
  * 根据 display_started_at 后经过的秒数，计算当前该显示第几回合。
- * 返回 0 = 尚未开始，1-5 = R1-R5，6 = 半决赛，7 = 决赛
+ * 时间线：intro(15s) → R1(35s) → R2(35s) → ... → R5(35s) → 半决赛(20s)
+ * 返回 0 = intro 阶段，1-5 = R1-R5，6 = 半决赛
  */
 export function computeDisplayRound(elapsedSec: number): number {
   if (elapsedSec < 0) return 0;
+  // intro 阶段
+  if (elapsedSec < INTRO_DISPLAY_SECONDS) return 0;
+  // 减去 intro 偏移
+  const afterIntro = elapsedSec - INTRO_DISPLAY_SECONDS;
   // R1-R5: 每回合 ROUND_DISPLAY_SECONDS 秒
   for (let r = 1; r <= 5; r++) {
     const threshold = r * ROUND_DISPLAY_SECONDS;
-    if (elapsedSec < threshold) return r;
+    if (afterIntro < threshold) return r;
   }
   // 半决赛: 5 * ROUND_DISPLAY_SECONDS 后
   const semiStart = 5 * ROUND_DISPLAY_SECONDS;
-  if (elapsedSec < semiStart + SEMIFINALS_DISPLAY_SECONDS) return 6;
+  if (afterIntro < semiStart + SEMIFINALS_DISPLAY_SECONDS) return 6;
   // 已超过半决赛显示时间
   return 6;
 }

@@ -382,14 +382,16 @@ export default function Home() {
   function startCountdown(gameId: string, initialSeconds?: number) {
     setCountdown(initialSeconds ?? 30);
     if (countdownRef.current) clearInterval(countdownRef.current);
+    const startedRef = { called: false };
     countdownRef.current = setInterval(() => {
       setCountdown(prev => {
         if (prev === null || prev <= 1) {
           if (countdownRef.current) clearInterval(countdownRef.current);
-          triggerStart(gameId);
+          if (!startedRef.called) { startedRef.called = true; triggerStart(gameId); }
           return 0;
         }
-        if (prev === 5) triggerStart(gameId);
+        // 提前 5 秒触发 start（减少感知延迟），幂等锁保证只处理一次
+        if (prev === 5 && !startedRef.called) { startedRef.called = true; triggerStart(gameId); }
         return prev - 1;
       });
     }, 1000);
@@ -503,7 +505,6 @@ export default function Home() {
   const repRanking = isRevealing ? progressiveRepRanking : (gameState?.reputationRanking || []);
   const hotRanking = isRevealing ? progressiveHotRanking : (gameState?.hotRanking || []);
   const isGameActive = status.startsWith('round_') || status.startsWith('processing_') ||
-    status === 'batch_processing' ||
     status === 'intro' || status === 'semifinals' || status === 'artifact_selection' || status === 'final' || status === 'ending';
   const isParticipant = user.isLoggedIn && gameState?.heroes?.some(h => h.heroId === user.heroId);
 

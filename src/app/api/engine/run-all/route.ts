@@ -9,6 +9,10 @@ export const maxDuration = 300; // 5 分钟超时
 /**
  * 批处理：顺序跑 R1-R5 + 半决赛，每回合保存快照到 game_state 表。
  * 由 start API fire-and-forget 触发。
+ *
+ * display_started_at 已由 start API 设置，时间线从 intro 就开始走。
+ * 本端点只负责：算 → 存快照 → 更新 processedThrough。
+ * 前端通过 computeDisplayRound(elapsed) 与 min(processedThrough, computed) 自然同步。
  */
 export async function POST(request: NextRequest) {
   try {
@@ -43,10 +47,11 @@ export async function POST(request: NextRequest) {
       // 保存该回合快照到独立行
       await saveRoundSnapshot(gameId, round, result);
 
-      // 更新 batch_progress
+      // 更新 batch_progress（前端轮询时读取 processedThrough）
       await supabaseAdmin.from('game_state').update({
         batch_progress: {
           processedThrough: round,
+          totalRounds: 6,
           startedAt: new Date(t0).toISOString(),
           lastUpdatedAt: new Date().toISOString(),
         },
@@ -67,6 +72,7 @@ export async function POST(request: NextRequest) {
     await supabaseAdmin.from('game_state').update({
       batch_progress: {
         processedThrough: 6,
+        totalRounds: 6,
         startedAt: new Date(t0).toISOString(),
         lastUpdatedAt: new Date().toISOString(),
       },
@@ -75,18 +81,16 @@ export async function POST(request: NextRequest) {
 
     console.log(`[RunAll] ✓ semifinals done (${Date.now()-t0}ms total)`);
 
-    // === 设置 display_started_at，前端开始按时间线渲染 ===
+    // === 更新结束状态（不设 display_started_at，start 已设）===
     const now = new Date().toISOString();
 
     if (winners.length >= 2 && artifactPool) {
-      // 有两个胜者 → 暂停在 artifact_selection
+      // 有两个胜者 → 暂停在 artifact_selection（前端通过 displayRound>=6 + games.status 检测）
       await supabaseAdmin.from('games').update({
         status: 'artifact_selection',
       }).eq('id', gameId);
 
       await supabaseAdmin.from('game_state').update({
-        status: 'batch_processing', // 前端看到 batch_processing 后按 displayRound 渲染
-        display_started_at: now,
         artifact_pool: artifactPool,
         updated_at: now,
       }).eq('id', 'current');
@@ -96,15 +100,9 @@ export async function POST(request: NextRequest) {
         status: 'ending',
         champion_hero_id: winners[0]?.hero_id || null,
       }).eq('id', gameId);
-
-      await supabaseAdmin.from('game_state').update({
-        status: 'batch_processing',
-        display_started_at: now,
-        updated_at: now,
-      }).eq('id', 'current');
     }
 
-    console.log(`[RunAll] ✓ batch complete in ${Date.now()-t0}ms, display_started_at=${now}`);
+    console.log(`[RunAll] ✓ batch complete in ${Date.now()-t0}ms`);
     return NextResponse.json({ status: 'complete', processedThrough: 6 });
   } catch (err: any) {
     console.error('[RunAll] error:', err);
