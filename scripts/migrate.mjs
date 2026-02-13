@@ -43,6 +43,7 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
 }
 
 const MIGRATION_SQL = [
+  `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS countdown_started_at TIMESTAMPTZ`,
   `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS audience_influence JSONB DEFAULT '{}'`,
   `ALTER TABLE heroes ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE games ENABLE ROW LEVEL SECURITY`,
@@ -55,6 +56,7 @@ const MIGRATION_SQL = [
   `ALTER TABLE game_queue ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE activity_log ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE artifact_gifts ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS phase_started_at TIMESTAMPTZ`,
 ];
 
 async function tryExecSQL(sql) {

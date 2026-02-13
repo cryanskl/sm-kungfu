@@ -101,7 +101,10 @@ export async function POST(request: NextRequest) {
     heroes: heroSnapshots,
     updated_at: new Date().toISOString(),
   };
-  if (revertToWaiting) upsertData.countdown_started_at = null;
+  if (revertToWaiting) {
+    upsertData.countdown_started_at = null;
+    upsertData.phase_started_at = new Date().toISOString();
+  }
   await supabaseAdmin.from('game_state').upsert(upsertData);
 
   return NextResponse.json({ status: 'left' });

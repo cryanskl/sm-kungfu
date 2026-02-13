@@ -84,7 +84,14 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
       }
     } catch { /* ignore */ }
 
-    // 后续 3s 间隔轮询
+    // 智能轮询：根据游戏阶段调整间隔
+    const getInterval = () => {
+      const status = get().gameState?.status;
+      if (!status || status === 'waiting' || status === 'ended') return 8000;
+      if (status === 'countdown' || status === 'ending') return 5000;
+      return 3000; // 战斗阶段保持 3s
+    };
+
     const poll = async () => {
       if (!get().isPolling) return;
       try {
@@ -96,10 +103,10 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
       } catch { /* ignore */ }
 
       if (get().isPolling) {
-        setTimeout(poll, 3000);
+        setTimeout(poll, getInterval());
       }
     };
-    setTimeout(poll, 3000);
+    setTimeout(poll, getInterval());
   },
   stopPolling: () => set({ isPolling: false }),
   pollNow: async () => {

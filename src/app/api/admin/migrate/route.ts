@@ -3,6 +3,9 @@ import { requireSession } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase';
 
 const MIGRATION_SQL = `
+-- 服务器权威倒计时
+ALTER TABLE game_state ADD COLUMN IF NOT EXISTS countdown_started_at TIMESTAMPTZ;
+
 -- 弹幕天意：观众影响力列
 ALTER TABLE game_state ADD COLUMN IF NOT EXISTS audience_influence JSONB DEFAULT '{}';
 

@@ -295,6 +295,7 @@ export async function POST(request: NextRequest) {
         phase: 'artifact_selection',
         recent_events: events,
         artifact_pool: artifactPool,
+        phase_started_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
     } else if (winners.length === 1) {

@@ -99,8 +99,8 @@ export function HeroCard({ hero, compact = false, rank }: { hero: GameHeroSnapsh
             {hero.hasDeathPact && <span className="text-[10px] opacity-70">📜</span>}
             {hero.allyHeroId && <span className="text-[10px] opacity-70">🤝</span>}
           </div>
-          <div className="w-full h-1 bg-ink-medium rounded-full mt-1 overflow-hidden">
-            <div className={`h-full rounded-full hp-bar ${hpColor} ${hpPercent < 30 ? 'hp-low' : ''}`}
+          <div className="w-full h-1.5 bg-ink-medium rounded-full mt-1 overflow-hidden">
+            <div className={`h-full rounded-full hp-bar ${hpColor} ${hpGlow} ${hpPercent < 30 ? 'hp-low' : ''}`}
                  style={{ width: `${hpPercent}%` }} />
           </div>
         </div>

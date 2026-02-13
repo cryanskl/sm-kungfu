@@ -306,6 +306,7 @@ export async function POST(request: NextRequest) {
       champion_name: champion.hero.hero_name,
       recent_events: events,
       artifact_pool: { ...(artifactPool || {}), isOpen: false },
+      phase_started_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
 

@@ -221,6 +221,10 @@ export interface GameState {
   // 候补队列
   queueCount: number;
 
+  // 服务器权威时间（多设备同步）
+  serverTime: string;
+  phaseElapsedMs: number | null;
+
   updatedAt: string;
 }
 

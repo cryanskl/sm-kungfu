@@ -22,6 +22,34 @@ export function EndedPhase({
 }: EndedPhaseProps) {
   return (
     <div className="py-8 md:py-12 phase-enter">
+      <div className="text-center mb-8">
+        {(gameState?.queueCount ?? 0) > 0 && (
+          <p className="text-sm text-gold mb-2">当前候补 {gameState!.queueCount} 人</p>
+        )}
+        <div className="flex items-center justify-center gap-3 flex-wrap">
+          <button onClick={onJoinImmediate}
+            disabled={isJoining} className="btn-gold text-lg px-10 py-3">
+            {isJoining ? '加入中…' : '⚔️ 加入房间'}
+          </button>
+          {endedCountdown !== null && endedCountdown > 0 && (
+            <span className="text-sm text-[--text-dim] font-mono tabular-nums">
+              {skipNextGame ? '将观战下一局' : `${endedCountdown}s 后自动加入`}
+            </span>
+          )}
+          {!skipNextGame ? (
+            <button onClick={() => onSkipNextGame(true)} className="btn-ghost text-sm">👀 仅观战</button>
+          ) : (
+            <span className="text-xs text-[--text-dim] px-3 py-1.5 rounded-lg bg-ink-dark/80 border border-ink-light/20">
+              👀 观战模式
+            </span>
+          )}
+          <ShareButton />
+        </div>
+        <p className="text-xs text-[--text-dim] mt-3 tracking-wide">
+          {skipNextGame ? '将以观众身份观看下一局' : '未满12人自动入座，已满则顺位等候，比赛已开始则先观战'}
+        </p>
+      </div>
+
       <div className="champion-banner mb-8">
         <div className="text-7xl mb-4 animate-crown-float">🏆</div>
         <h2 className="font-display text-3xl md:text-4xl font-bold text-gold mb-2 animate-glow-text tracking-wider">
@@ -146,33 +174,6 @@ export function EndedPhase({
         </div>
       )}
 
-      <div className="text-center">
-        {(gameState?.queueCount ?? 0) > 0 && (
-          <p className="text-sm text-gold mb-2">当前候补 {gameState!.queueCount} 人</p>
-        )}
-        <div className="flex items-center justify-center gap-3 flex-wrap">
-          <button onClick={onJoinImmediate}
-            disabled={isJoining} className="btn-gold text-lg px-10 py-3">
-            {isJoining ? '加入中…' : '⚔️ 加入房间'}
-          </button>
-          {endedCountdown !== null && endedCountdown > 0 && (
-            <span className="text-sm text-[--text-dim] font-mono tabular-nums">
-              {skipNextGame ? '将观战下一局' : `${endedCountdown}s 后自动加入`}
-            </span>
-          )}
-          {!skipNextGame ? (
-            <button onClick={() => onSkipNextGame(true)} className="btn-ghost text-sm">👀 仅观战</button>
-          ) : (
-            <span className="text-xs text-[--text-dim] px-3 py-1.5 rounded-lg bg-ink-dark/80 border border-ink-light/20">
-              👀 观战模式
-            </span>
-          )}
-          <ShareButton />
-        </div>
-        <p className="text-xs text-[--text-dim] mt-3 tracking-wide">
-          {skipNextGame ? '将以观众身份观看下一局' : '未满12人自动入座，已满则顺位等候，比赛已开始则先观战'}
-        </p>
-      </div>
     </div>
   );
 }

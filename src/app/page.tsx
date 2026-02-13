@@ -189,22 +189,28 @@ export default function Home() {
     if (status === 'intro') {
       lastTriggeredRef.current = key;
       clearAllTimers();
-      setIntroTimer(15);
+      const elapsed = getPhaseElapsedSec();
+      const introRemaining = Math.max(0, 15 - elapsed);
+      setIntroTimer(introRemaining);
       if (introTimerRef.current) clearInterval(introTimerRef.current);
-      introTimerRef.current = setInterval(() => {
-        setIntroTimer(prev => {
-          if (prev === null || prev <= 1) {
-            if (introTimerRef.current) clearInterval(introTimerRef.current);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+      if (introRemaining > 0) {
+        introTimerRef.current = setInterval(() => {
+          setIntroTimer(prev => {
+            if (prev === null || prev <= 1) {
+              if (introTimerRef.current) clearInterval(introTimerRef.current);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
       fetch('/api/engine/prefetch', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ gameId, roundNumber: 1 }),
       }).catch(() => {});
-      timerRef.current = setTimeout(() => triggerRound(gameId, 1), 10000); // 提前 5s 触发，减少「即将开战」等待
+      // 10s 触发，减去已过时间
+      const triggerDelay = Math.max(0, 10000 - elapsed * 1000);
+      timerRef.current = setTimeout(() => triggerRound(gameId, 1), triggerDelay);
     }
 
     if (status.startsWith('round_')) {
@@ -215,72 +221,112 @@ export default function Home() {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ gameId, roundNumber: pendingRound }),
         }).catch(() => {});
-        startRoundTimer(gameId, pendingRound, 30); // 兜底30s，正常由揭晓完毕触发
+        const elapsed = getPhaseElapsedSec();
+        startRoundTimer(gameId, pendingRound, Math.max(5, 30 - elapsed)); // 兜底，减去已过时间
       }
     }
 
     if (status === 'semifinals') {
       lastTriggeredRef.current = key;
       clearAllTimers();
-      timerRef.current = setTimeout(() => triggerFinals(gameId), 5000);
+      const elapsed = getPhaseElapsedSec();
+      const triggerDelay = Math.max(0, 5000 - elapsed * 1000);
+      timerRef.current = setTimeout(() => triggerFinals(gameId), triggerDelay);
     }
 
     if (status === 'artifact_selection') {
       lastTriggeredRef.current = key;
       clearAllTimers();
-      setArtifactTimer(10);
+      const elapsed = getPhaseElapsedSec();
+      const artifactRemaining = Math.max(0, 10 - elapsed);
+      setArtifactTimer(artifactRemaining);
       if (artifactTimerRef.current) clearInterval(artifactTimerRef.current);
-      artifactTimerRef.current = setInterval(() => {
-        setArtifactTimer(prev => {
-          if (prev === null || prev <= 1) {
-            if (artifactTimerRef.current) clearInterval(artifactTimerRef.current);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-      timerRef.current = setTimeout(() => triggerFinal(gameId), 10000);
+      if (artifactRemaining > 0) {
+        artifactTimerRef.current = setInterval(() => {
+          setArtifactTimer(prev => {
+            if (prev === null || prev <= 1) {
+              if (artifactTimerRef.current) clearInterval(artifactTimerRef.current);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
+      const triggerDelay = Math.max(0, 10000 - elapsed * 1000);
+      timerRef.current = setTimeout(() => triggerFinal(gameId), triggerDelay);
     }
 
     if (status === 'ending') {
       lastTriggeredRef.current = key;
       clearAllTimers();
-      setEndingTimer(10);
+      const elapsed = getPhaseElapsedSec();
+      const endingRemaining = Math.max(0, 10 - elapsed);
+      setEndingTimer(endingRemaining);
       if (endingTimerRef.current) clearInterval(endingTimerRef.current);
-      endingTimerRef.current = setInterval(() => {
-        setEndingTimer(prev => {
-          if (prev === null || prev <= 1) {
-            if (endingTimerRef.current) clearInterval(endingTimerRef.current);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-      timerRef.current = setTimeout(() => triggerEnd(gameId), 10000);
+      if (endingRemaining > 0) {
+        endingTimerRef.current = setInterval(() => {
+          setEndingTimer(prev => {
+            if (prev === null || prev <= 1) {
+              if (endingTimerRef.current) clearInterval(endingTimerRef.current);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
+      const triggerDelay = Math.max(0, 10000 - elapsed * 1000);
+      timerRef.current = setTimeout(() => triggerEnd(gameId), triggerDelay);
     }
 
     if (status === 'ended') {
       lastTriggeredRef.current = key;
-      setEndedCountdown(45);
+      const elapsed = getPhaseElapsedSec();
+      const endedRemaining = Math.max(0, 45 - elapsed);
+      setEndedCountdown(endedRemaining);
       if (endedTimerRef.current) clearInterval(endedTimerRef.current);
-      endedTimerRef.current = setInterval(() => {
-        setEndedCountdown(prev => {
-          if (prev === null || prev <= 1) {
-            if (endedTimerRef.current) { clearInterval(endedTimerRef.current); endedTimerRef.current = null; }
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+      if (endedRemaining > 0) {
+        endedTimerRef.current = setInterval(() => {
+          setEndedCountdown(prev => {
+            if (prev === null || prev <= 1) {
+              if (endedTimerRef.current) { clearInterval(endedTimerRef.current); endedTimerRef.current = null; }
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
     }
   }, [gameState?.status, gameState?.gameId]);
 
-  // 服务器权威倒计时同步：每次轮询时用服务器返回的剩余秒数校准本地倒计时
+  // 服务器权威时间同步：每次轮询校准本地 timer
   useEffect(() => {
-    if (gameState?.status !== 'countdown') return;
-    if (gameState.countdownSeconds == null) return;
-    if (countdown === null) return; // 尚未初始化，由状态驱动器处理
-    setCountdown(gameState.countdownSeconds);
+    const status = gameState?.status;
+
+    // countdown: 用服务端精确计算的 countdownSeconds（独立于 phaseElapsedMs）
+    if (status === 'countdown' && gameState?.countdownSeconds != null && countdown !== null) {
+      setCountdown(gameState.countdownSeconds);
+    }
+
+    const elapsed = gameState?.phaseElapsedMs;
+    if (!status || elapsed == null) return;
+    const elapsedSec = Math.floor(elapsed / 1000);
+
+    // intro: 15s 总时长
+    if (status === 'intro' && introTimer !== null) {
+      setIntroTimer(Math.max(0, 15 - elapsedSec));
+    }
+    // artifact_selection: 10s 总时长
+    if (status === 'artifact_selection' && artifactTimer !== null) {
+      setArtifactTimer(Math.max(0, 10 - elapsedSec));
+    }
+    // ending: 10s 总时长
+    if (status === 'ending' && endingTimer !== null) {
+      setEndingTimer(Math.max(0, 10 - elapsedSec));
+    }
+    // ended: 45s 总时长
+    if (status === 'ended' && endedCountdown !== null) {
+      setEndedCountdown(Math.max(0, 45 - elapsedSec));
+    }
   }, [gameState?.updatedAt]);
 
   // ended 倒计时到 0：自动加入或刷新
@@ -403,6 +449,13 @@ export default function Home() {
       }
     }
   }, [revealedEvents.length, isRevealing]);
+
+  // 从服务端权威时间计算当前阶段已过秒数（多设备同步）
+  function getPhaseElapsedSec(): number {
+    const elapsed = gameState?.phaseElapsedMs;
+    if (elapsed == null || elapsed < 0) return 0;
+    return Math.floor(elapsed / 1000);
+  }
 
   function clearAllTimers() {
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }

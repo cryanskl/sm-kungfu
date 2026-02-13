@@ -77,11 +77,13 @@ export function RankingPanel({ title, icon, entries, highlight }: {
 
               {/* Rank delta arrow */}
               {delta !== null && delta !== 0 && (
-                <span className={`text-[10px] w-3 flex-shrink-0 ${delta > 0 ? 'text-jade' : 'text-vermillion'}`}>
+                <span className={`text-xs w-4 flex-shrink-0 font-bold transition-all duration-300 ${
+                  delta > 0 ? 'text-jade animate-bounce-subtle' : 'text-vermillion animate-bounce-subtle'
+                }`}>
                   {delta > 0 ? '▲' : '▼'}
                 </span>
               )}
-              {(delta === null || delta === 0) && <span className="w-3 flex-shrink-0" />}
+              {(delta === null || delta === 0) && <span className="w-4 flex-shrink-0" />}
 
               {/* Name */}
               <span className={`flex-1 truncate ${

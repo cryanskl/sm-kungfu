@@ -1036,6 +1036,7 @@ async function updateGameStateCache(
     reputation_ranking: repRanking,
     hot_ranking: hotRanking,
     next_round_preview: `下一回合：${nextPreview}`,
+    phase_started_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   });
 }

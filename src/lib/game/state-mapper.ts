@@ -29,6 +29,9 @@ export function mapGameStateRow(data: any): GameState {
     artifactPool: data.artifact_pool || null,
     audienceInfluence: data.audience_influence || null,
     queueCount: data.queue_count || 0,
+    // 服务器权威时间（由 state route 填充）
+    serverTime: '',
+    phaseElapsedMs: null,
     updatedAt: data.updated_at,
   };
 }

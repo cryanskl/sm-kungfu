@@ -22,6 +22,15 @@ export function DanmakuOverlay() {
   const localDanmaku = useWulinStore(s => s.localDanmaku);
   const clearLocalDanmaku = useWulinStore(s => s.clearLocalDanmaku);
   const [floating, setFloating] = useState<FloatingDanmaku[]>([]);
+  const [scrollDuration, setScrollDuration] = useState(8);
+
+  // 根据屏幕宽度计算弹幕滚动时间：每 100px ≈ 1s，最少 5s 最多 12s
+  useEffect(() => {
+    const calc = () => setScrollDuration(Math.max(5, Math.min(12, window.innerWidth / 120)));
+    calc();
+    window.addEventListener('resize', calc);
+    return () => window.removeEventListener('resize', calc);
+  }, []);
   const seenIds = useRef(new Set<string>());
   const prevGameIdRef = useRef<string | null>(null);
 
@@ -92,7 +101,7 @@ export function DanmakuOverlay() {
     if (floating.length === 0) return;
     const timer = setTimeout(() => {
       setFloating(prev => prev.slice(1));
-    }, 9000);
+    }, (scrollDuration + 1) * 1000);
     return () => clearTimeout(timer);
   }, [floating.length]);
 
@@ -127,7 +136,7 @@ export function DanmakuOverlay() {
               textShadow: isC
                 ? `1px 1px 4px rgba(0,0,0,0.9), 0 0 16px ${color}40`
                 : '1px 1px 4px rgba(0,0,0,0.9), 0 0 12px rgba(0,0,0,0.5)',
-              animation: 'danmakuScroll 8s linear forwards',
+              animation: `danmakuScroll ${scrollDuration}s linear forwards`,
               letterSpacing: '0.02em',
             }}
           >

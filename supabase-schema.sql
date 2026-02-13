@@ -271,6 +271,9 @@ ALTER TABLE heroes ADD COLUMN IF NOT EXISTS backstory TEXT;
 -- === 服务器权威倒计时 ===
 ALTER TABLE game_state ADD COLUMN IF NOT EXISTS countdown_started_at TIMESTAMPTZ;
 
+-- === 服务器权威阶段时间戳（多设备同步）===
+ALTER TABLE game_state ADD COLUMN IF NOT EXISTS phase_started_at TIMESTAMPTZ;
+
 -- 初始化 game_state
 INSERT INTO game_state (id, status, phase) VALUES ('current', 'waiting', 'waiting')
 ON CONFLICT (id) DO NOTHING;

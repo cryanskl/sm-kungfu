@@ -100,79 +100,83 @@ export function GameHeader({
         {/* Right: Actions */}
         <div className="flex items-center gap-3 text-sm">
           <MuteToggle />
-          {user.isLoggedIn && isGameActive && !isParticipant && (
-            <button
-              onClick={() => { if (!isQueued) { onJoin(); onSetQueued(true); } }}
-              disabled={isQueued}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
-                isQueued
-                  ? 'border-jade/30 text-jade opacity-70 cursor-default'
-                  : 'border-gold/30 text-gold hover:bg-gold/8'
-              }`}
-            >
-              {isQueued ? '✅ 已候场' : '🎯 候场'}
-            </button>
-          )}
-          {isParticipant && (status === 'waiting' || status === 'countdown') && (
-            <button
-              onClick={onLeave}
-              disabled={isLeaving}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold border border-vermillion/30 text-vermillion hover:bg-vermillion/8 transition disabled:opacity-40"
-            >
-              {isLeaving ? '退出中…' : '🚪 退出'}
-            </button>
-          )}
           {user.isLoggedIn ? (
-            <div className="flex items-center gap-2.5 relative" ref={profileRef}>
-              {(() => {
-                const t = getSeasonTitle(user.hero?.seasonPoints ?? 0);
-                return <span className="text-gold text-xs font-display hidden xs:inline">{t.icon} {t.name}</span>;
-              })()}
-              <span className="text-ink-faint hidden xs:inline">|</span>
-              <button
-                onClick={() => setShowProfileDropdown(v => !v)}
-                className="flex items-center gap-1 hover:text-gold transition"
-              >
-                <span className="text-sm truncate max-w-[80px] xs:max-w-none">{user.hero?.heroName || user.hero?.hero_name}</span>
-                <span className="text-[10px] text-[--text-dim]">▼</span>
-              </button>
-              {showProfileDropdown && (
-                <div className="absolute right-0 top-full mt-2 w-56 bg-ink-dark border border-gold/15 rounded-xl shadow-ink overflow-hidden z-[60] animate-fade-in-down">
-                  <div className="p-4 border-b border-gold/10">
-                    {(() => {
-                      const t = getSeasonTitle(user.hero?.seasonPoints ?? 0);
-                      return (
-                        <>
-                          <div className="text-2xl font-display font-bold text-gold">{t.icon} {t.name}</div>
-                          <div className="text-xs text-[--text-dim] mt-1 font-mono tabular-nums">
-                            💰 {(user.hero?.balance ?? 0).toLocaleString()} 银两
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-                  <div className="p-4 space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-[--text-dim]">总场次</span>
-                      <span className="tabular-nums">{user.hero?.totalGames ?? 0}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[--text-dim]">胜场 (前三)</span>
-                      <span className="text-gold tabular-nums">{user.hero?.totalWins ?? 0}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[--text-dim]">赛季积分</span>
-                      <span className="text-gold tabular-nums">{user.hero?.seasonPoints ?? 0}</span>
-                    </div>
-                  </div>
-                  <div className="border-t border-gold/10">
-                    <a href="/api/auth/logout"
-                      className="block w-full text-center py-3 text-sm text-vermillion hover:bg-vermillion/8 transition">
-                      退出登录
-                    </a>
-                  </div>
-                </div>
+            <div className="flex items-center gap-2.5">
+              {/* 等候/退出 toggle */}
+              {isParticipant ? (
+                (status === 'waiting' || status === 'countdown') && (
+                  <button
+                    onClick={onLeave}
+                    disabled={isLeaving}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold border border-vermillion/30 text-vermillion hover:bg-vermillion/8 transition disabled:opacity-40"
+                  >
+                    {isLeaving ? '退出中…' : '🚪 退出'}
+                  </button>
+                )
+              ) : (
+                <button
+                  onClick={() => { if (!isQueued) { onJoin(); onSetQueued(true); } }}
+                  disabled={isQueued}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                    isQueued
+                      ? 'border-jade/30 text-jade opacity-70 cursor-default'
+                      : 'border-gold/30 text-gold hover:bg-gold/8'
+                  }`}
+                >
+                  {isQueued ? '✅ 已候场' : '🎯 等候'}
+                </button>
               )}
+              <div className="flex items-center gap-2.5 relative" ref={profileRef}>
+                {(() => {
+                  const t = getSeasonTitle(user.hero?.seasonPoints ?? 0);
+                  return <span className="text-gold text-xs font-display hidden xs:inline">{t.icon} {t.name}</span>;
+                })()}
+                <span className="text-ink-faint hidden xs:inline">|</span>
+                <button
+                  onClick={() => setShowProfileDropdown(v => !v)}
+                  className="flex items-center gap-1 hover:text-gold transition"
+                >
+                  <span className="text-sm truncate max-w-[80px] xs:max-w-none">{user.hero?.heroName || user.hero?.hero_name}</span>
+                  <span className="text-[10px] text-[--text-dim]">▼</span>
+                </button>
+                {showProfileDropdown && (
+                  <div className="absolute right-0 top-full mt-2 w-56 bg-ink-dark border border-gold/15 rounded-xl shadow-ink overflow-hidden z-[60] animate-fade-in-down">
+                    <div className="p-4 border-b border-gold/10">
+                      {(() => {
+                        const t = getSeasonTitle(user.hero?.seasonPoints ?? 0);
+                        return (
+                          <>
+                            <div className="text-2xl font-display font-bold text-gold">{t.icon} {t.name}</div>
+                            <div className="text-xs text-[--text-dim] mt-1 font-mono tabular-nums">
+                              💰 {(user.hero?.balance ?? 0).toLocaleString()} 银两
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                    <div className="p-4 space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-[--text-dim]">总场次</span>
+                        <span className="tabular-nums">{user.hero?.totalGames ?? 0}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[--text-dim]">胜场 (前三)</span>
+                        <span className="text-gold tabular-nums">{user.hero?.totalWins ?? 0}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[--text-dim]">赛季积分</span>
+                        <span className="text-gold tabular-nums">{user.hero?.seasonPoints ?? 0}</span>
+                      </div>
+                    </div>
+                    <div className="border-t border-gold/10">
+                      <a href="/api/auth/logout"
+                        className="block w-full text-center py-3 text-sm text-vermillion hover:bg-vermillion/8 transition">
+                        退出登录
+                      </a>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <a href="/api/auth/login" className="btn-gold text-sm px-5 py-1.5">

@@ -25,9 +25,11 @@ export async function POST(request: NextRequest) {
     if (error || !game) {
       // 游戏已结束但 game_state 可能还卡在 ending（比如服务器重启后）
       // 修复 game_state 使前端能正常跳到 ended
+      const nowIso = new Date().toISOString();
       await supabaseAdmin.from('game_state').update({
         status: 'ended',
-        updated_at: new Date().toISOString(),
+        phase_started_at: nowIso,
+        updated_at: nowIso,
       }).eq('id', 'current').eq('status', 'ending');
 
       const { data: freshState } = await supabaseAdmin
@@ -435,6 +437,7 @@ export async function POST(request: NextRequest) {
       bet_winners: betWinners,
       balance_ranking: balanceRanking,
       battle_stats: battleStats,
+      phase_started_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
 
