@@ -154,6 +154,26 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (existing) {
+      // 已入座但游戏卡在 waiting → 补救触发倒计时
+      if (game.status === 'waiting') {
+        const { data: hh } = await supabaseAdmin
+          .from('game_heroes')
+          .select('*, hero:heroes(*)')
+          .eq('game_id', game.id);
+        const hc = hh?.filter((gh: any) => !gh.hero?.is_npc).length || 0;
+        if (hc >= 1) {
+          await supabaseAdmin
+            .from('games')
+            .update({ status: 'countdown' })
+            .eq('id', game.id)
+            .eq('status', 'waiting');
+          await supabaseAdmin.from('game_state').update({
+            status: 'countdown',
+            countdown_seconds: 30,
+            updated_at: new Date().toISOString(),
+          }).eq('id', 'current');
+        }
+      }
       return NextResponse.json({ gameId: game.id, seat: existing.seat_number, status: 'already_joined' });
     }
 
