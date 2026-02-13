@@ -268,6 +268,9 @@ ALTER TABLE artifact_gifts ENABLE ROW LEVEL SECURITY;
 -- === 封神榜：英雄背景故事 ===
 ALTER TABLE heroes ADD COLUMN IF NOT EXISTS backstory TEXT;
 
+-- === 服务器权威倒计时 ===
+ALTER TABLE game_state ADD COLUMN IF NOT EXISTS countdown_started_at TIMESTAMPTZ;
+
 -- 初始化 game_state
 INSERT INTO game_state (id, status, phase) VALUES ('current', 'waiting', 'waiting')
 ON CONFLICT (id) DO NOTHING;

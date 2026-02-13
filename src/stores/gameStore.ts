@@ -130,7 +130,7 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
   addCommentaryDanmaku: (item) => {
     const now = Date.now();
     const state = get();
-    if (now - state.lastCommentaryTime < 200) return; // 200ms rate limit
+    if (now - state.lastCommentaryTime < 2000) return; // 2s rate limit — strict danmaku cap
     set({
       localDanmaku: [...state.localDanmaku.slice(-49), item],
       lastCommentaryTime: now,

@@ -187,6 +187,19 @@ export function useEventRevealer() {
     setIsRevealing(false);
   }, [clearTimer]);
 
+  const resetReveal = useCallback(() => {
+    clearTimer();
+    pendingRef.current = [];
+    heroesRef.current = [];
+    revealedRef.current = [];
+    setIsRevealing(false);
+    setRevealedEvents([]);
+    setProgressiveHeroes([]);
+    setProgressiveRepRanking([]);
+    setProgressiveHotRanking([]);
+    setRevealProgress({ current: 0, total: 0 });
+  }, [clearTimer]);
+
   return {
     isRevealing,
     revealedEvents,
@@ -196,5 +209,6 @@ export function useEventRevealer() {
     revealProgress,
     startReveal,
     skipReveal,
+    resetReveal,
   };
 }

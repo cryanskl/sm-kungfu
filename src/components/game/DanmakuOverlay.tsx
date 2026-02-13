@@ -53,27 +53,40 @@ export function DanmakuOverlay() {
   // 神兵助战阶段不显示弹幕
   const suppressDanmaku = gameState?.status === 'artifact_selection';
 
+  // 待发送队列：新弹幕先入队，由定时器匀速消费
+  const pendingQueue = useRef<FloatingDanmaku[]>([]);
+
   useEffect(() => {
     if (suppressDanmaku) return;
     const serverItems = gameState?.danmaku || [];
     const allItems = [...serverItems, ...localDanmaku];
 
-    const newItems: FloatingDanmaku[] = [];
     for (const item of allItems) {
       if (!seenIds.current.has(item.id)) {
         seenIds.current.add(item.id);
-        newItems.push({
+        pendingQueue.current.push({
           ...item,
           top: 5 + Math.random() * 60,
           key: item.id,
         });
       }
     }
-
-    if (newItems.length > 0) {
-      setFloating(prev => [...prev, ...newItems]);
-    }
   }, [gameState?.danmaku, localDanmaku, suppressDanmaku]);
+
+  // 匀速消费队列：每 800ms 取最多 3 条，屏幕上限 10 条
+  useEffect(() => {
+    const flush = setInterval(() => {
+      if (pendingQueue.current.length === 0) return;
+      setFloating(prev => {
+        const slotsAvailable = Math.max(0, 10 - prev.length);
+        if (slotsAvailable === 0) return prev;
+        const take = Math.min(3, slotsAvailable, pendingQueue.current.length);
+        const batch = pendingQueue.current.splice(0, take);
+        return [...prev, ...batch];
+      });
+    }, 800);
+    return () => clearInterval(flush);
+  }, []);
 
   useEffect(() => {
     if (floating.length === 0) return;
@@ -94,9 +107,12 @@ export function DanmakuOverlay() {
 
   if (floating.length === 0) return null;
 
+  // 硬上限：最多渲染 10 条
+  const visible = floating.slice(0, 10);
+
   return (
     <div className="fixed inset-0 z-20 pointer-events-none overflow-hidden">
-      {floating.map(item => {
+      {visible.map(item => {
         const isC = item.isCommentary;
         const color = COLOR_MAP[item.color] || COLOR_MAP.white;
         return (

@@ -46,7 +46,7 @@ export default function Home() {
   const {
     isRevealing, revealedEvents, progressiveHeroes: revealHeroes,
     progressiveRepRanking, progressiveHotRanking,
-    startReveal, skipReveal,
+    startReveal, skipReveal, resetReveal,
   } = useEventRevealer();
 
   // Refs
@@ -138,6 +138,9 @@ export default function Home() {
       clearAudienceArtifact();
       resetEliminationCount();
       lastEventCountRef.current = 0;
+      // 清除上一局残留的事件，防止新回合显示旧决赛结果
+      setCurrentEvents([]);
+      resetReveal();
     }
     prevGameIdRef.current = gid;
   }, [gameState?.gameId, clearAudienceBets, clearLocalDanmaku]);
@@ -180,7 +183,7 @@ export default function Home() {
 
     if (status === 'countdown' && countdown === null) {
       lastTriggeredRef.current = key;
-      startCountdown(gameId);
+      startCountdown(gameId, gameState?.countdownSeconds ?? 30);
     }
 
     if (status === 'intro') {
@@ -272,6 +275,14 @@ export default function Home() {
     }
   }, [gameState?.status, gameState?.gameId]);
 
+  // 服务器权威倒计时同步：每次轮询时用服务器返回的剩余秒数校准本地倒计时
+  useEffect(() => {
+    if (gameState?.status !== 'countdown') return;
+    if (gameState.countdownSeconds == null) return;
+    if (countdown === null) return; // 尚未初始化，由状态驱动器处理
+    setCountdown(gameState.countdownSeconds);
+  }, [gameState?.updatedAt]);
+
   // ended 倒计时到 0：自动加入或刷新
   useEffect(() => {
     if (endedCountdown === 0 && gameState?.status === 'ended') {
@@ -325,10 +336,10 @@ export default function Home() {
       resetEliminationCount();
       commentaryTimersRef.current.forEach(t => clearTimeout(t));
       commentaryTimersRef.current = [];
-      // 生成庆祝弹幕，分散在 2-30 秒内飘过
+      // 生成庆祝弹幕，均匀分散在 3-40 秒内，每条间隔 ≥3s
       const celebrations = generateCelebrationDanmaku(gameState?.championName || undefined);
       celebrations.forEach((item, i) => {
-        const delay = 2000 + Math.floor(Math.random() * 28000);
+        const delay = 3000 + i * 4000 + Math.floor(Math.random() * 2000);
         const timer = setTimeout(() => addLocalDanmaku(item), delay);
         commentaryTimersRef.current.push(timer);
       });
@@ -379,10 +390,14 @@ export default function Home() {
     lastRevealedCountRef.current = count;
     const heroes = gameState?.heroes || [];
 
+    // 每批最多生成 2 条解说弹幕，间隔 ≥2s，防止刷屏
+    let commentaryGenerated = 0;
     for (const e of newEvts) {
+      if (commentaryGenerated >= 2) break;
       const commentary = generateCommentary(e, heroes);
       if (commentary) {
-        const delay = Math.floor(Math.random() * 500); // 0-500ms jitter
+        commentaryGenerated++;
+        const delay = (commentaryGenerated - 1) * 2000 + Math.floor(Math.random() * 800);
         const timer = setTimeout(() => addCommentaryDanmaku(commentary), delay);
         commentaryTimersRef.current.push(timer);
       }
@@ -399,8 +414,8 @@ export default function Home() {
     setArtifactTimer(null);
   }
 
-  function startCountdown(gameId: string) {
-    setCountdown(30);
+  function startCountdown(gameId: string, initialSeconds?: number) {
+    setCountdown(initialSeconds ?? 30);
     if (countdownRef.current) clearInterval(countdownRef.current);
     countdownRef.current = setInterval(() => {
       setCountdown(prev => {
@@ -505,9 +520,13 @@ export default function Home() {
       const data = await res.json();
       if (data.gameState) setGameState(data.gameState);
       else pollNow();
-      if (data.events) {
-        setCurrentEvents(data.events);
-        startReveal(data.events, snapshot, 35000);
+      // 优先用 API 返回的事件；若被节流（events=[]），回退到 gameState 缓存事件
+      const evts = (data.events && data.events.length > 0)
+        ? data.events
+        : (data.gameState?.recentEvents || []);
+      if (evts.length > 0) {
+        setCurrentEvents(evts);
+        startReveal(evts, snapshot, 35000);
       }
     } catch (e) { console.error('Round error:', e); pollNow(); }
     setIsProcessing(false);
@@ -527,9 +546,12 @@ export default function Home() {
       const data = await res.json();
       if (data.gameState) setGameState(data.gameState);
       else pollNow();
-      if (data.events) {
-        setCurrentEvents(data.events);
-        startReveal(data.events, snapshot, 10000);
+      const evts = (data.events && data.events.length > 0)
+        ? data.events
+        : (data.gameState?.recentEvents || []);
+      if (evts.length > 0) {
+        setCurrentEvents(evts);
+        startReveal(evts, snapshot, 10000);
       }
     } catch (e) { console.error('Finals error:', e); pollNow(); }
     setIsProcessing(false);
@@ -548,9 +570,12 @@ export default function Home() {
       const data = await res.json();
       if (data.gameState) setGameState(data.gameState);
       else pollNow();
-      if (data.events) {
-        setCurrentEvents(data.events);
-        startReveal(data.events, snapshot, 10000);
+      const evts = (data.events && data.events.length > 0)
+        ? data.events
+        : (data.gameState?.recentEvents || []);
+      if (evts.length > 0) {
+        setCurrentEvents(evts);
+        startReveal(evts, snapshot, 10000);
       }
     } catch (e) { console.error('Final error:', e); pollNow(); }
     setIsProcessing(false);

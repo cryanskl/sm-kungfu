@@ -92,14 +92,17 @@ export async function POST(request: NextRequest) {
       .eq('id', game.id);
   }
 
-  const newStatus = humanCount === 0 && game.status === 'countdown' ? 'waiting' : game.status;
-  await supabaseAdmin.from('game_state').upsert({
+  const revertToWaiting = humanCount === 0 && game.status === 'countdown';
+  const newStatus = revertToWaiting ? 'waiting' : game.status;
+  const upsertData: Record<string, any> = {
     id: 'current',
     game_id: game.id,
     status: newStatus,
     heroes: heroSnapshots,
     updated_at: new Date().toISOString(),
-  });
+  };
+  if (revertToWaiting) upsertData.countdown_started_at = null;
+  await supabaseAdmin.from('game_state').upsert(upsertData);
 
   return NextResponse.json({ status: 'left' });
 }

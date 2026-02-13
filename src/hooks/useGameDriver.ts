@@ -10,10 +10,10 @@ export function useGameDriver() {
   const [countdown, setCountdown] = useState<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 30 秒倒计时
+  // 30 秒倒计时（使用服务器权威时间）
   useEffect(() => {
     if (gameState?.status === 'countdown') {
-      setCountdown(30);
+      setCountdown(gameState?.countdownSeconds ?? 30);
       timerRef.current = setInterval(() => {
         setCountdown(prev => {
           if (prev === null || prev <= 1) {

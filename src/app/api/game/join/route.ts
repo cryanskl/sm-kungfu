@@ -159,7 +159,8 @@ export async function POST(request: NextRequest) {
         const { data: hh } = await supabaseAdmin
           .from('game_heroes')
           .select('*, hero:heroes(*)')
-          .eq('game_id', game.id);
+          .eq('game_id', game.id)
+          .order('seat_number');
         const hc = hh?.filter((gh: any) => !gh.hero?.is_npc).length || 0;
         if (hc >= 1) {
           await supabaseAdmin
@@ -167,11 +168,47 @@ export async function POST(request: NextRequest) {
             .update({ status: 'countdown' })
             .eq('id', game.id)
             .eq('status', 'waiting');
-          await supabaseAdmin.from('game_state').update({
+          // Full upsert including heroes + game_id to prevent stale data from previous game
+          const repairSnapshots = hh?.map((gh: any) => ({
+            heroId: gh.hero_id,
+            heroName: gh.hero?.hero_name || '无名',
+            faction: gh.hero?.faction || '少林',
+            personalityType: gh.hero?.personality_type || 'random',
+            seatNumber: gh.seat_number,
+            hp: gh.hp,
+            maxHp: INITIAL_HP,
+            reputation: 0,
+            hot: 0,
+            morality: gh.morality || 50,
+            credit: gh.credit || 50,
+            isEliminated: false,
+            allyHeroId: null,
+            allyHeroName: null,
+            martialArts: [],
+            hasDeathPact: false,
+            isNpc: gh.hero?.is_npc || false,
+            catchphrase: gh.hero?.catchphrase || '……',
+            avatarUrl: gh.hero?.avatar_url,
+            strength: gh.hero?.strength || 10,
+            innerForce: gh.hero?.inner_force || 10,
+            agility: gh.hero?.agility || 10,
+            wisdom: gh.hero?.wisdom || 10,
+            constitution: gh.hero?.constitution || 10,
+            charisma: gh.hero?.charisma || 10,
+          })) || [];
+          const now = new Date().toISOString();
+          await supabaseAdmin.from('game_state').upsert({
+            id: 'current',
+            game_id: game.id,
             status: 'countdown',
+            phase: 'waiting',
+            heroes: repairSnapshots,
             countdown_seconds: 30,
-            updated_at: new Date().toISOString(),
-          }).eq('id', 'current');
+            countdown_started_at: now,
+            danmaku: [],
+            recent_events: [],
+            updated_at: now,
+          });
         }
       }
       return NextResponse.json({ gameId: game.id, seat: existing.seat_number, status: 'already_joined' });
@@ -290,16 +327,17 @@ export async function POST(request: NextRequest) {
     })) || [];
 
     const newStatus = humanCount >= 1 && game.status === 'waiting' ? 'countdown' : game.status;
+    const nowIso = new Date().toISOString();
     await supabaseAdmin.from('game_state').upsert({
       id: 'current',
       game_id: game.id,
       status: newStatus,
       phase: 'waiting',
       heroes: heroSnapshots,
-      countdown_seconds: newStatus === 'countdown' ? 30 : null,
+      countdown_started_at: newStatus === 'countdown' ? nowIso : null,
       danmaku: [],
       recent_events: [],
-      updated_at: new Date().toISOString(),
+      updated_at: nowIso,
     });
 
     return NextResponse.json({

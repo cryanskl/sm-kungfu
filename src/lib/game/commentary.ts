@@ -252,7 +252,7 @@ const CELEBRATION_TEMPLATES = [
 export function generateCelebrationDanmaku(championName?: string): DanmakuItem[] {
   const items: DanmakuItem[] = [];
   const used = new Set<number>();
-  const count = 12 + Math.floor(Math.random() * 6); // 12-17 messages
+  const count = 6 + Math.floor(Math.random() * 3); // 6-8 messages (strict danmaku cap)
 
   for (let i = 0; i < count; i++) {
     let idx: number;
