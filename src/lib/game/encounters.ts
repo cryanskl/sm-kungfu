@@ -3,7 +3,7 @@
 // 150+ 随机事件，按类别分组，权重控制稀有度
 // ============================================================
 
-import type { Faction, PersonalityType } from '@/lib/types';
+import type { EncounterChoice, Faction, PersonalityType } from '@/lib/types';
 
 export type EncounterTier = 'shared' | 'personal' | 'intersection';
 
@@ -26,6 +26,18 @@ export interface Encounter {
   personalityAffinity?: PersonalityType[];
   tier: EncounterTier;
   locationTag?: string;
+}
+
+export function toEncounterChoice(enc: Encounter, heroName: string): EncounterChoice {
+  return {
+    id: enc.id,
+    category: enc.category,
+    name: enc.narrative(heroName),
+    effects: enc.effects,
+    martialArt: enc.martialArt,
+    factionAffinity: enc.factionAffinity,
+    personalityAffinity: enc.personalityAffinity,
+  };
 }
 
 // ============================================================
@@ -1671,6 +1683,45 @@ export function rollPersonalEncounters(
         encounter,
       });
     }
+  }
+
+  return results;
+}
+
+/**
+ * Generate candidate encounters for a single hero (player chooses from these).
+ * Reuses existing round filtering, affinity weighting, and dedup logic.
+ */
+export function rollCandidateEncounters(
+  round: number,
+  hero: HeroInfo,
+  count: number,
+  usedEncounterIds: Set<string>,
+): Encounter[] {
+  const eligible = ENCOUNTERS.filter(e => {
+    if (e.minRound && round < e.minRound) return false;
+    if (e.maxRound && round > e.maxRound) return false;
+    return true;
+  });
+
+  const results: Encounter[] = [];
+
+  for (let i = 0; i < count; i++) {
+    let pool = eligible.filter(e => !usedEncounterIds.has(e.id) && !results.some(r => r.id === e.id));
+    if (pool.length === 0) {
+      pool = eligible.filter(e => !results.some(r => r.id === e.id));
+    }
+    if (pool.length === 0) break;
+
+    const affinityPool = pool.filter(e =>
+      (e.factionAffinity?.includes(hero.faction)) ||
+      (e.personalityAffinity?.includes(hero.personalityType))
+    );
+
+    const useAffinity = affinityPool.length > 0 && Math.random() < 0.7;
+    const encounter = weightedPick(useAffinity ? affinityPool : pool);
+    results.push(encounter);
+    usedEncounterIds.add(encounter.id);
   }
 
   return results;
