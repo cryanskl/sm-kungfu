@@ -259,6 +259,9 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // 重置观众天意使用状态
+    await supabaseAdmin.from('heroes').update({ influence_used: false }).eq('id', heroId);
+
     // 新创建的游戏 → 消费候补队列
     const { data: occupiedAfter } = await supabaseAdmin
       .from('game_heroes')
