@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireSession } from '@/lib/auth';
 
 /**
  * GET /api/admin/stats?days=7
  * 返回最近 N 天的登录/参赛统计（按天、按小时分布）
  */
 export async function GET(request: NextRequest) {
+  const authError = await requireSession();
+  if (authError) return authError;
   const days = Math.min(Number(request.nextUrl.searchParams.get('days')) || 7, 90);
   const since = new Date();
   since.setDate(since.getDate() - days);

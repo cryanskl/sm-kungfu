@@ -32,6 +32,22 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error || !game) {
+      // 崩溃恢复：processing_finals 卡住超过 60s → 回退到 semifinals 允许重试
+      const { data: stuckGame } = await supabaseAdmin
+        .from('games').select('status, updated_at').eq('id', gameId).single();
+      if (stuckGame?.status === 'processing_finals') {
+        const updatedAt = stuckGame.updated_at ? new Date(stuckGame.updated_at).getTime() : 0;
+        const stuckSeconds = (Date.now() - updatedAt) / 1000;
+        if (stuckSeconds > 60) {
+          console.warn(`[Engine] ⚠ processing_finals stuck for ${stuckSeconds.toFixed(0)}s, resetting to semifinals`);
+          await supabaseAdmin.from('games')
+            .update({ status: 'semifinals' })
+            .eq('id', gameId)
+            .eq('status', 'processing_finals');
+          return NextResponse.json({ recovered: true, events: [] });
+        }
+      }
+
       const { data: cached } = await supabaseAdmin
         .from('game_events')
         .select('*')

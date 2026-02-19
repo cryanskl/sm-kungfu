@@ -22,6 +22,8 @@ export class SecondMeClient {
   static async refreshToken(refreshTokenStr: string): Promise<{
     accessToken: string; refreshToken: string; expiresIn: number;
   } | null> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000); // 8s 超时
     try {
       const res = await fetch(`${SM_BASE}/api/oauth/token/refresh`, {
         method: 'POST',
@@ -32,6 +34,7 @@ export class SecondMeClient {
           client_id: process.env.SECONDME_CLIENT_ID || '',
           client_secret: process.env.SECONDME_CLIENT_SECRET || '',
         }),
+        signal: controller.signal,
       });
       if (!res.ok) {
         console.error('[SM] refreshToken HTTP failed:', res.status);
@@ -50,6 +53,8 @@ export class SecondMeClient {
     } catch (err) {
       console.error('[SM] refreshToken error:', err);
       return null;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -252,11 +257,12 @@ export function shadesToAttributes(shades: SecondMeShade[]): {
   wisdom: number; constitution: number; charisma: number;
   faction: string; personalityType: string;
 } {
-  // 基础属性 10
-  let str = 10, int = 10, agi = 10, wis = 10, con = 10, cha = 10;
+  // 基础属性 15（确保玩家与 NPC 属性在同一区间）
+  let str = 15, int = 15, agi = 15, wis = 15, con = 15, cha = 15;
 
   // 根据 shade 标签映射（使用 shadeName 和 confidenceLevel）
-  for (const shade of shades) {
+  for (let si = 0; si < shades.length; si++) {
+    const shade = shades[si];
     const conf = confidenceToNumber(shade.confidenceLevel);
     const bonus = Math.round(conf * 10);
     // 同时用 shadeName 和 shadeDescription / shadeContent 做关键词匹配
@@ -267,33 +273,62 @@ export function shadesToAttributes(shades: SecondMeShade[]): {
       shade.shadeNamePublic || '',
     ].join(' ').toLowerCase();
 
-    if (['bold', 'assertive', 'competitive', 'aggressive', 'decisive', '果断', '外向', '运动', '冒险'].some(k => text.includes(k))) {
-      str += bonus;
+    let matched = false;
+    if (['bold', 'assertive', 'competitive', 'aggressive', 'decisive', '果断', '外向', '运动', '冒险', 'strong', 'brave', 'power', '力量', '勇敢', '刚毅'].some(k => text.includes(k))) {
+      str += bonus; matched = true;
     }
-    if (['creative', 'thoughtful', 'deep', 'intellectual', '创造', '思考', '哲学', '文学'].some(k => text.includes(k))) {
-      int += bonus;
+    if (['creative', 'thoughtful', 'deep', 'intellectual', '创造', '思考', '哲学', '文学', 'curious', 'imaginative', 'spiritual', '好奇', '内省', '修养'].some(k => text.includes(k))) {
+      int += bonus; matched = true;
     }
-    if (['flexible', 'humorous', 'witty', 'adaptable', '灵活', '幽默', '机智', '反应'].some(k => text.includes(k))) {
-      agi += bonus;
+    if (['flexible', 'humorous', 'witty', 'adaptable', '灵活', '幽默', '机智', '反应', 'quick', 'agile', 'spontaneous', '敏捷', '随机应变', '活泼'].some(k => text.includes(k))) {
+      agi += bonus; matched = true;
     }
-    if (['analytical', 'logical', 'strategic', 'rational', '分析', '逻辑', '理性', '科技'].some(k => text.includes(k))) {
-      wis += bonus;
+    if (['analytical', 'logical', 'strategic', 'rational', '分析', '逻辑', '理性', '科技', 'smart', 'intelligent', 'wise', 'planner', '聪明', '智慧', '谋略'].some(k => text.includes(k))) {
+      wis += bonus; matched = true;
     }
-    if (['steady', 'resilient', 'patient', 'reliable', '稳重', '坚韧', '耐心', '可靠'].some(k => text.includes(k))) {
-      con += bonus;
+    if (['steady', 'resilient', 'patient', 'reliable', '稳重', '坚韧', '耐心', '可靠', 'calm', 'persistent', 'tough', '沉稳', '毅力', '坚强'].some(k => text.includes(k))) {
+      con += bonus; matched = true;
     }
-    if (['friendly', 'empathetic', 'leader', 'social', '亲和', '领导', '社交', '沟通'].some(k => text.includes(k))) {
-      cha += bonus;
+    if (['friendly', 'empathetic', 'leader', 'social', '亲和', '领导', '社交', '沟通', 'charming', 'kind', 'generous', '热情', '善良', '感性'].some(k => text.includes(k))) {
+      cha += bonus; matched = true;
+    }
+    // 没有匹配任何关键词的 shade → 按轮转分配到最低属性，保证不浪费
+    if (!matched) {
+      const vals = [str, int, agi, wis, con, cha];
+      const minIdx = vals.indexOf(Math.min(...vals));
+      const smallBonus = Math.max(3, Math.round(conf * 5));
+      if (minIdx === 0) str += smallBonus;
+      else if (minIdx === 1) int += smallBonus;
+      else if (minIdx === 2) agi += smallBonus;
+      else if (minIdx === 3) wis += smallBonus;
+      else if (minIdx === 4) con += smallBonus;
+      else cha += smallBonus;
     }
   }
 
-  // 限制每项最大 30
-  str = Math.min(str, 30);
-  int = Math.min(int, 30);
-  agi = Math.min(agi, 30);
-  wis = Math.min(wis, 30);
-  con = Math.min(con, 30);
-  cha = Math.min(cha, 30);
+  // 限制每项最大 35
+  str = Math.min(str, 35);
+  int = Math.min(int, 35);
+  agi = Math.min(agi, 35);
+  wis = Math.min(wis, 35);
+  con = Math.min(con, 35);
+  cha = Math.min(cha, 35);
+
+  // 保底：总属性不低于 110（将差值均匀补到最低的属性上）
+  const MIN_TOTAL = 110;
+  let total = str + int + agi + wis + con + cha;
+  while (total < MIN_TOTAL) {
+    const vals = [str, int, agi, wis, con, cha];
+    const minVal = Math.min(...vals);
+    const minIdx = vals.indexOf(minVal);
+    if (minIdx === 0) str++;
+    else if (minIdx === 1) int++;
+    else if (minIdx === 2) agi++;
+    else if (minIdx === 3) wis++;
+    else if (minIdx === 4) con++;
+    else cha++;
+    total++;
+  }
 
   // 根据最高属性分配门派
   const attrs = { strength: str, innerForce: int, agility: agi, wisdom: wis, constitution: con, charisma: cha };
@@ -311,9 +346,9 @@ export function shadesToAttributes(shades: SecondMeShade[]): {
 
   // 性格类型
   let personalityType = 'random';
-  if (str >= 20) personalityType = 'aggressive';
-  else if (con >= 20 || wis >= 20) personalityType = 'cautious';
-  else if (cha >= 20 || wis >= 18) personalityType = 'cunning';
+  if (str >= 25) personalityType = 'aggressive';
+  else if (con >= 25 || wis >= 25) personalityType = 'cautious';
+  else if (cha >= 23 || wis >= 23) personalityType = 'cunning';
 
   return { strength: str, innerForce: int, agility: agi, wisdom: wis, constitution: con, charisma: cha, faction, personalityType };
 }

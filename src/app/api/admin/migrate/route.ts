@@ -21,6 +21,9 @@ ALTER TABLE danmaku ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_queue ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE artifact_gifts ENABLE ROW LEVEL SECURITY;
+
+-- 确保所有英雄都有初始余额
+UPDATE heroes SET balance = 10000 WHERE balance IS NULL;
 `.trim();
 
 // 拆成单条语句逐条执行

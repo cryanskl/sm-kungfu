@@ -12,7 +12,7 @@ interface Props {
 }
 
 export function ArtifactSelectionPanel({ artifactPool, timer, gameId, heroes }: Props) {
-  const { user, audienceArtifact, setAudienceArtifact } = useWulinStore();
+  const { user, setUser, audienceArtifact, setAudienceArtifact } = useWulinStore();
   const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null);
   const [pendingHero, setPendingHero] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -53,6 +53,9 @@ export function ArtifactSelectionPanel({ artifactPool, timer, gameId, heroes }: 
           heroId,
           amount: art?.price || 0,
         });
+        if (data.newBalance !== undefined && user.hero) {
+          setUser({ ...user, hero: { ...user.hero, balance: data.newBalance } });
+        }
         setSuccess(true);
       } else {
         setError(data.error || '赠送失败');
@@ -61,7 +64,7 @@ export function ArtifactSelectionPanel({ artifactPool, timer, gameId, heroes }: 
       setError('网络错误');
     }
     setIsSubmitting(false);
-  }, [selectedArtifact, pendingHero, isSubmitting, alreadyGifted, artifacts, setAudienceArtifact]);
+  }, [selectedArtifact, pendingHero, isSubmitting, alreadyGifted, artifacts, setAudienceArtifact, user, setUser]);
 
   const selectedArtifactDef = artifacts.find(a => a.id === selectedArtifact);
 

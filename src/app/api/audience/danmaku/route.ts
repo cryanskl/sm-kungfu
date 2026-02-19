@@ -4,6 +4,7 @@ import { transformDanmaku, influenceAwareDanmakuColor } from '@/lib/game/danmaku
 import { cookies } from 'next/headers';
 import { danmakuRateLimiter } from '@/lib/rate-limit';
 import { detectInfluence } from '@/lib/game/audience-influence';
+import { signCookie, verifyCookie } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,9 +16,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '弹幕最多50字' }, { status: 400 });
     }
 
-    // 获取或生成 audience_id
+    // 获取或生成 audience_id（签名验证防伪造）
     const cookieStore = await cookies();
-    let audienceId = cookieStore.get('wulin_audience_id')?.value;
+    let audienceId = verifyCookie(cookieStore.get('wulin_audience_id')?.value);
     if (!audienceId) {
       audienceId = crypto.randomUUID();
     }
@@ -92,8 +93,8 @@ export async function POST(request: NextRequest) {
 
     // 设置 cookie
     const response = NextResponse.json({ ok: true, danmaku: newItem });
-    response.cookies.set('wulin_audience_id', audienceId, {
-      httpOnly: false,
+    response.cookies.set('wulin_audience_id', signCookie(audienceId), {
+      httpOnly: true,
       maxAge: 60 * 60 * 24 * 30,
       path: '/',
       sameSite: 'lax',

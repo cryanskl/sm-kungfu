@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { cookies } from 'next/headers';
-import { getHeroIdFromCookies } from '@/lib/auth';
+import { getHeroIdFromCookies, signCookie, verifyCookie } from '@/lib/auth';
 import { BET_AMOUNTS } from '@/lib/game/constants';
 import { betRateLimiter } from '@/lib/rate-limit';
 
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
       audienceId = loggedInHeroId!;
     } else {
       const cookieStore = await cookies();
-      audienceId = cookieStore.get('wulin_audience_id')?.value || crypto.randomUUID();
+      audienceId = verifyCookie(cookieStore.get('wulin_audience_id')?.value) || crypto.randomUUID();
     }
 
     // 限流检查
@@ -135,8 +135,8 @@ export async function POST(request: NextRequest) {
 
     // 匿名用户才设置 cookie
     if (!isLoggedIn) {
-      response.cookies.set('wulin_audience_id', audienceId, {
-        httpOnly: false,
+      response.cookies.set('wulin_audience_id', signCookie(audienceId), {
+        httpOnly: true,
         maxAge: 60 * 60 * 24 * 30,
         path: '/',
         sameSite: 'lax',

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { getHeroIdFromCookies } from '@/lib/auth';
 import { computeFinalAttributes, QUIZ_QUESTIONS } from '@/lib/game/character-editor';
+import { getAllAchievementDefs, getHeroAchievements } from '@/lib/game/achievements';
 import type { CharacterConfig } from '@/lib/types';
 
 /**
@@ -30,6 +31,13 @@ export async function GET(request: NextRequest) {
   const canEdit = lastEdit === 0 || Date.now() - lastEdit > cooldownMs;
   const nextEditAt = lastEdit > 0 ? new Date(lastEdit + cooldownMs).toISOString() : null;
 
+  // 成就数据
+  let unlockedIds: string[] = [];
+  try {
+    const unlocked = await getHeroAchievements(heroId);
+    unlockedIds = unlocked.map(a => a.id);
+  } catch { /* ignore */ }
+
   return NextResponse.json({
     config: hero.character_config || null,
     quizAnswers: hero.quiz_answers || null,
@@ -48,6 +56,8 @@ export async function GET(request: NextRequest) {
     catchphrase: hero.catchphrase,
     canEdit,
     nextEditAt,
+    allAchievements: getAllAchievementDefs(),
+    unlockedAchievementIds: unlockedIds,
   });
 }
 

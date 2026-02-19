@@ -38,6 +38,21 @@ export async function POST(request: NextRequest) {
       // 已被其他请求锁定或已开始，返回当前状态
       const { data: existing } = await supabaseAdmin
         .from('games').select('*').eq('id', currentGame.id).single();
+
+      // 崩溃恢复：starting 状态卡住超过 60s（NPC 创建+Bio生成可能较慢），回滚到 countdown 允许重试
+      if (existing?.status === 'starting') {
+        const updatedAt = existing.updated_at ? new Date(existing.updated_at).getTime() : 0;
+        const stuckSeconds = (Date.now() - updatedAt) / 1000;
+        if (stuckSeconds > 60) {
+          console.warn(`[Engine] ⚠ Game stuck in 'starting' for ${stuckSeconds.toFixed(0)}s, resetting to countdown`);
+          await supabaseAdmin.from('games')
+            .update({ status: 'countdown' })
+            .eq('id', currentGame.id)
+            .eq('status', 'starting');
+          return NextResponse.json({ recovered: true, status: 'countdown' });
+        }
+      }
+
       return NextResponse.json({
         gameId: currentGame.id,
         status: existing?.status || 'already_started',

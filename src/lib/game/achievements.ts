@@ -425,6 +425,13 @@ export async function evaluateAndAwardAchievements(
 }
 
 /**
+ * 返回全量成就定义（不含 evaluate），用于前端展示
+ */
+export function getAllAchievementDefs(): Achievement[] {
+  return ACHIEVEMENTS.map(({ evaluate, ...rest }) => rest);
+}
+
+/**
  * 获取英雄的所有成就
  */
 export async function getHeroAchievements(heroId: string): Promise<Achievement[]> {

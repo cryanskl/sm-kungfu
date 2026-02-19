@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import type { Faction, PersonalityType, HeroAttributes, CharacterConfig, QuizQuestion } from '@/lib/types';
+import type { Faction, PersonalityType, HeroAttributes, CharacterConfig, QuizQuestion, Achievement } from '@/lib/types';
 
 interface CharacterEditorProps {
   isOpen: boolean;
@@ -31,7 +31,7 @@ const ATTR_LABELS: Record<keyof HeroAttributes, string> = {
 };
 
 export function CharacterEditor({ isOpen, onClose }: CharacterEditorProps) {
-  const [tab, setTab] = useState<'quick' | 'quiz' | 'custom'>('quick');
+  const [tab, setTab] = useState<'quick' | 'quiz' | 'custom' | 'achievements'>('quick');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -41,6 +41,8 @@ export function CharacterEditor({ isOpen, onClose }: CharacterEditorProps) {
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
   const [canEdit, setCanEdit] = useState(true);
   const [nextEditAt, setNextEditAt] = useState<string | null>(null);
+  const [allAchievements, setAllAchievements] = useState<Achievement[]>([]);
+  const [unlockedIds, setUnlockedIds] = useState<Set<string>>(new Set());
 
   // 编辑状态
   const [faction, setFaction] = useState<Faction | null>(null);
@@ -73,6 +75,12 @@ export function CharacterEditor({ isOpen, onClose }: CharacterEditorProps) {
       }
       if (data.quizAnswers) {
         setQuizAnswers(data.quizAnswers);
+      }
+      if (data.allAchievements) {
+        setAllAchievements(data.allAchievements);
+      }
+      if (data.unlockedAchievementIds) {
+        setUnlockedIds(new Set(data.unlockedAchievementIds));
       }
     } catch {
       setError('加载失败');
@@ -143,6 +151,7 @@ export function CharacterEditor({ isOpen, onClose }: CharacterEditorProps) {
                 { key: 'quick' as const, label: '快速设定' },
                 { key: 'quiz' as const, label: '问卷' },
                 { key: 'custom' as const, label: '个性化' },
+                { key: 'achievements' as const, label: '成就' },
               ].map(t => (
                 <button
                   key={t.key}
@@ -295,8 +304,65 @@ export function CharacterEditor({ isOpen, onClose }: CharacterEditorProps) {
               </div>
             )}
 
-            {/* 六维属性预览 */}
-            {currentAttrs && (
+            {/* Tab 4: 成就 */}
+            {tab === 'achievements' && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-[--text-dim]">
+                    已解锁 {unlockedIds.size}/{allAchievements.length}
+                  </p>
+                  <p className="text-xs text-gold font-mono">
+                    {allAchievements.filter(a => unlockedIds.has(a.id)).reduce((s, a) => s + a.points, 0)} 积分
+                  </p>
+                </div>
+
+                {(['instant', 'accumulated', 'hidden'] as const).map(cat => {
+                  const catLabel = cat === 'instant' ? '局内即时' : cat === 'accumulated' ? '跨局积累' : '隐藏成就';
+                  const items = allAchievements.filter(a => a.category === cat);
+                  if (items.length === 0) return null;
+                  return (
+                    <div key={cat}>
+                      <h4 className="text-xs font-bold text-[--text-secondary] mb-1.5 tracking-wider">{catLabel}</h4>
+                      <div className="space-y-1.5">
+                        {items.map(a => {
+                          const unlocked = unlockedIds.has(a.id);
+                          return (
+                            <div
+                              key={a.id}
+                              className={`flex items-center gap-3 px-3 py-2 rounded-lg border transition-all ${
+                                unlocked
+                                  ? 'border-gold/30 bg-gold/5'
+                                  : 'border-ink-light/10 bg-ink-dark/30 opacity-50'
+                              }`}
+                            >
+                              <span className="text-lg flex-shrink-0">{a.icon}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className={`text-sm font-bold truncate ${unlocked ? 'text-gold' : 'text-[--text-dim]'}`}>
+                                  {a.name}
+                                </div>
+                                <div className="text-[10px] text-[--text-dim] truncate">
+                                  {cat === 'hidden' && !unlocked ? '???' : a.description}
+                                </div>
+                              </div>
+                              <span className={`text-xs font-mono flex-shrink-0 ${unlocked ? 'text-gold' : 'text-[--text-dim]'}`}>
+                                +{a.points}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {allAchievements.length === 0 && (
+                  <p className="text-center text-[--text-dim] py-6 text-sm">暂无成就数据</p>
+                )}
+              </div>
+            )}
+
+            {/* 六维属性预览（成就 Tab 不显示） */}
+            {currentAttrs && tab !== 'achievements' && (
               <div className="mt-4 pt-4 border-t border-ink-light/10">
                 <h4 className="text-sm font-bold text-[--text-secondary] mb-2">当前属性</h4>
                 <div className="grid grid-cols-3 gap-2">
@@ -310,24 +376,30 @@ export function CharacterEditor({ isOpen, onClose }: CharacterEditorProps) {
               </div>
             )}
 
-            {/* 保存按钮 */}
+            {/* 保存按钮（成就 Tab 只显示关闭） */}
             <div className="mt-4 pt-4 border-t border-ink-light/10">
-              {error && <p className="text-vermillion text-sm mb-2">{error}</p>}
-              {!canEdit && nextEditAt && (
-                <p className="text-[--text-dim] text-xs mb-2">
-                  下次可修改时间：{new Date(nextEditAt).toLocaleString('zh-CN')}
-                </p>
+              {tab !== 'achievements' ? (
+                <>
+                  {error && <p className="text-vermillion text-sm mb-2">{error}</p>}
+                  {!canEdit && nextEditAt && (
+                    <p className="text-[--text-dim] text-xs mb-2">
+                      下次可修改时间：{new Date(nextEditAt).toLocaleString('zh-CN')}
+                    </p>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSave}
+                      disabled={!canEdit || saving}
+                      className="btn-gold flex-1 disabled:opacity-40"
+                    >
+                      {saving ? '保存中...' : canEdit ? '保存设定' : '冷却中'}
+                    </button>
+                    <button onClick={onClose} className="btn-ghost">取消</button>
+                  </div>
+                </>
+              ) : (
+                <button onClick={onClose} className="btn-ghost w-full">关闭</button>
               )}
-              <div className="flex gap-2">
-                <button
-                  onClick={handleSave}
-                  disabled={!canEdit || saving}
-                  className="btn-gold flex-1 disabled:opacity-40"
-                >
-                  {saving ? '保存中...' : canEdit ? '保存设定' : '冷却中'}
-                </button>
-                <button onClick={onClose} className="btn-ghost">取消</button>
-              </div>
             </div>
           </>
         )}
