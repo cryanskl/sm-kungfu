@@ -7,7 +7,7 @@ import { roundPrompt, speechPrompt, deathPactPrompt, DIRECTOR_EVENTS } from './p
 import { NPC_TEMPLATES, pickRandomTrait, GAME_TRAITS } from './npc-data/templates';
 import * as C from './constants';
 import { narratives } from './narratives';
-import { rollEncounters, rollPersonalEncounters } from './encounters';
+import { rollEncounters, rollPersonalEncounters, rollCandidateEncounters, toEncounterChoice } from './encounters';
 import { applyAudienceEffects } from './audience-influence';
 import type { AudienceInfluence } from '../types';
 
@@ -75,6 +75,87 @@ export async function prefetchDecisions(gameId: string, roundNumber: number): Pr
 }
 
 // ============================================================
+// 交互式选择阶段
+// ============================================================
+
+export async function startChoosing(gameId: string, roundNumber: number): Promise<{ success: boolean; error?: string }> {
+  const expectedStatus = roundNumber === 1 ? 'intro' : `round_${roundNumber - 1}`;
+  const choosingStatus = `choosing_${roundNumber}`;
+
+  // Optimistic lock
+  const { data: lockResult, error: lockError } = await supabaseAdmin
+    .from('games')
+    .update({ status: choosingStatus, updated_at: new Date().toISOString() })
+    .eq('id', gameId)
+    .eq('status', expectedStatus)
+    .select('id')
+    .single();
+
+  if (lockError || !lockResult) {
+    const { data: game } = await supabaseAdmin.from('games').select('status').eq('id', gameId).single();
+    if (game?.status === choosingStatus) return { success: true };
+    return { success: false, error: `Lock failed: expected ${expectedStatus}, got ${game?.status}` };
+  }
+
+  // Fetch alive heroes
+  const { data: gameHeroes } = await supabaseAdmin
+    .from('game_heroes')
+    .select('*, hero:heroes(hero_name, faction, personality_type, is_npc)')
+    .eq('game_id', gameId)
+    .eq('is_eliminated', false);
+
+  if (!gameHeroes || gameHeroes.length === 0) {
+    return { success: false, error: 'No alive heroes' };
+  }
+
+  const usedEncounterIds = new Set<string>();
+  const heroChoiceStatus: Record<string, 'pending' | 'chosen'> = {};
+  const deadline = new Date(Date.now() + C.CHOOSING_DURATION * 1000).toISOString();
+
+  for (const gh of gameHeroes) {
+    const heroInfo = {
+      heroName: gh.hero.hero_name,
+      heroId: gh.hero_id,
+      faction: gh.hero.faction,
+      personalityType: gh.hero.personality_type,
+    };
+
+    const candidates = rollCandidateEncounters(roundNumber, heroInfo, C.CANDIDATES_PER_HERO, usedEncounterIds);
+    const candidateChoices = candidates.map(c => toEncounterChoice(c, heroInfo.heroName));
+
+    if (gh.hero.is_npc) {
+      const autoChosen = candidateChoices.slice(0, C.CHOICES_PER_HERO).map(c => c.id);
+      await supabaseAdmin.from('game_heroes').update({
+        pending_choices: candidateChoices,
+        chosen_encounters: autoChosen,
+      }).eq('id', gh.id);
+      heroChoiceStatus[gh.hero_id] = 'chosen';
+    } else {
+      await supabaseAdmin.from('game_heroes').update({
+        pending_choices: candidateChoices,
+        chosen_encounters: [],
+      }).eq('id', gh.id);
+      heroChoiceStatus[gh.hero_id] = 'pending';
+    }
+  }
+
+  // Update game_state cache
+  await supabaseAdmin.from('game_state').update({
+    status: choosingStatus,
+    current_round: roundNumber,
+    choosing_deadline: deadline,
+    hero_choice_status: heroChoiceStatus,
+    phase_started_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }).eq('id', 'current');
+
+  // Background prefetch SecondMe decisions
+  prefetchDecisions(gameId, roundNumber).catch(() => {});
+
+  return { success: true };
+}
+
+// ============================================================
 // 游戏引擎
 // ============================================================
 
@@ -98,24 +179,25 @@ export async function processRound(gameId: string, roundNumber: number): Promise
     return { events: [], roundNumber, heroSnapshots: snapshots };
   }
 
-  const expectedStatus = roundNumber === 1 ? 'intro' : `round_${roundNumber}`;
+  const expectedStatus = `choosing_${roundNumber}`;
+  const processingStatus = `resolving_${roundNumber}`;
   const { data: game, error } = await supabaseAdmin
     .from('games')
-    .update({ status: `processing_${roundNumber}`, current_round: roundNumber })
+    .update({ status: processingStatus, current_round: roundNumber })
     .eq('id', gameId)
     .eq('status', expectedStatus)
     .select()
     .single();
 
   if (error || !game) {
-    // 检查是否卡在 processing（崩溃恢复）
+    // 检查是否卡在 resolving（崩溃恢复）
     const { data: stuckGame } = await supabaseAdmin
       .from('games')
       .select('status, current_round')
       .eq('id', gameId)
       .single();
 
-    if (stuckGame?.status === `processing_${roundNumber}`) {
+    if (stuckGame?.status === processingStatus) {
       // 检查是否卡了超过 30 秒（通过 game_state.updated_at 判断）
       const { data: gs } = await supabaseAdmin
         .from('game_state').select('updated_at').eq('id', 'current').single();
@@ -124,11 +206,11 @@ export async function processRound(gameId: string, roundNumber: number): Promise
 
       if (stuckSeconds > 30) {
         // 超时恢复：回滚到 expectedStatus 让下次请求重新处理
-        console.warn(`[Engine] ⚠ round=${roundNumber} stuck in processing for ${stuckSeconds.toFixed(0)}s, resetting`);
+        console.warn(`[Engine] ⚠ round=${roundNumber} stuck in resolving for ${stuckSeconds.toFixed(0)}s, resetting`);
         await supabaseAdmin.from('games')
           .update({ status: expectedStatus })
           .eq('id', gameId)
-          .eq('status', `processing_${roundNumber}`);
+          .eq('status', processingStatus);
         // 返回空让前端重试
         const snapshots = await getHeroSnapshots(gameId);
         return { events: [], roundNumber, heroSnapshots: snapshots };
@@ -161,6 +243,26 @@ export async function processRound(gameId: string, roundNumber: number): Promise
 
   const snapshots = gameHeroesToSnapshots(gameHeroes);
   const aliveSnapshots = snapshots.filter(h => !h.isEliminated);
+
+  // AI fallback: fill in choices for heroes who didn't choose
+  const { data: aliveHeroChoices } = await supabaseAdmin
+    .from('game_heroes')
+    .select('id, hero_id, pending_choices, chosen_encounters')
+    .eq('game_id', gameId)
+    .eq('is_eliminated', false);
+
+  if (aliveHeroChoices) {
+    for (const gh of aliveHeroChoices) {
+      const chosen = (gh.chosen_encounters || []) as string[];
+      if (chosen.length < C.CHOICES_PER_HERO && Array.isArray(gh.pending_choices) && gh.pending_choices.length > 0) {
+        const available = (gh.pending_choices as any[]).filter((c: any) => !chosen.includes(c.id));
+        const autoFill = available.slice(0, C.CHOICES_PER_HERO - chosen.length).map((c: any) => c.id);
+        await supabaseAdmin.from('game_heroes').update({
+          chosen_encounters: [...chosen, ...autoFill],
+        }).eq('id', gh.id);
+      }
+    }
+  }
 
   // 1. 收集所有决策（优先从预取缓存读取）
   const key = cacheKey(gameId, roundNumber);
@@ -200,6 +302,18 @@ export async function processRound(gameId: string, roundNumber: number): Promise
       }))
     );
   }
+
+  // Clear choice data for this round
+  await supabaseAdmin.from('game_heroes').update({
+    pending_choices: [],
+    chosen_encounters: [],
+  }).eq('game_id', gameId);
+
+  // Clear choosing phase data from game_state
+  await supabaseAdmin.from('game_state').update({
+    choosing_deadline: null,
+    hero_choice_status: {},
+  }).eq('id', 'current');
 
   // 4. 设置下一个状态
   // R5 结束后直接进 semifinals（R6 由 finals API 处理，不走 processRound）
@@ -309,7 +423,20 @@ async function collectDecisions(
     decisions.set(gh.hero_id, decision);
   });
 
-  await Promise.allSettled(promises);
+  // 全局 15s 超时保护：防止 SecondMe API 挂起导致整轮阻塞
+  await Promise.race([
+    Promise.allSettled(promises),
+    new Promise(resolve => setTimeout(resolve, 15000)),
+  ]);
+
+  // 超时后未返回决策的英雄使用 fallback
+  for (const gh of aliveHeroes) {
+    if (!decisions.has(gh.hero_id)) {
+      console.warn(`[Engine] Hero ${gh.hero?.hero_name || gh.hero_id} decision timed out, using fallback`);
+      decisions.set(gh.hero_id, { action: 'train', target: null, taunt: '……', reason: '通讯中断。' });
+    }
+  }
+
   return decisions;
 }
 
@@ -343,6 +470,43 @@ async function resolveRound(
     narrative: `【第${roundNumber}回合 · ${DIRECTOR_EVENTS[roundNumber].title}】${DIRECTOR_EVENTS[roundNumber].flavor || DIRECTOR_EVENTS[roundNumber].description}`,
     data: { roundNumber, title: DIRECTOR_EVENTS[roundNumber].title },
   } as any);
+
+  // --- 消费观众定向增益/减益 ---
+  {
+    const { data: gsInfluence } = await supabaseAdmin
+      .from('game_state')
+      .select('pending_influences')
+      .eq('id', 'current')
+      .single();
+
+    const pendingInfluences = (gsInfluence?.pending_influences || []) as any[];
+    for (const inf of pendingInfluences) {
+      const target = snapshots.find(s => s.heroId === inf.targetHeroId && !s.isEliminated);
+      if (!target) continue;
+
+      const isHp = Math.random() < 0.5;
+      const amount = inf.effectType === 'buff' ? C.INFLUENCE_BUFF_AMOUNT : -C.INFLUENCE_DEBUFF_AMOUNT;
+
+      events.push({
+        gameId, round: roundNumber,
+        heroId: inf.targetHeroId,
+        eventType: 'audience_influence',
+        narrative: inf.effectType === 'buff'
+          ? `观众助力！${target.heroName} ${isHp ? '气血' : '声望'}+${C.INFLUENCE_BUFF_AMOUNT}`
+          : `观众干扰！${target.heroName} ${isHp ? '气血' : '声望'}-${C.INFLUENCE_DEBUFF_AMOUNT}`,
+        hpDelta: isHp ? amount : 0,
+        repDelta: isHp ? 0 : amount,
+        data: { influenceType: inf.effectType, sourceHeroId: inf.sourceHeroId },
+      } as any);
+
+      if (isHp) addDelta(updates, inf.targetHeroId, 'hp', amount);
+      else addDelta(updates, inf.targetHeroId, 'reputation', amount);
+    }
+
+    if (pendingInfluences.length > 0) {
+      await supabaseAdmin.from('game_state').update({ pending_influences: [] }).eq('id', 'current');
+    }
+  }
 
   // --- 弹幕天意 ---
   {
@@ -655,59 +819,55 @@ async function resolveRound(
     }
   }
 
-  // --- 个人支线奇遇（P1 新版：按门派/性格亲和度分配） ---
+  // --- 个人支线奇遇（玩家选择版） ---
   {
-    const heroInfos = alive.filter(h => !h.isEliminated).map(h => ({
-      heroName: h.heroName,
-      heroId: h.heroId,
-      faction: h.faction,
-      personalityType: h.personalityType,
-    }));
-    const personalEncounters = rollPersonalEncounters(roundNumber, heroInfos, C.ENCOUNTERS_PER_HERO);
+    const { data: heroChoicesData } = await supabaseAdmin
+      .from('game_heroes')
+      .select('hero_id, chosen_encounters, pending_choices')
+      .eq('game_id', gameId)
+      .eq('is_eliminated', false);
 
-    for (const { heroName, heroId, encounter, intersectWith } of personalEncounters) {
-      const resolvedHeroId = getHeroIdByName(heroName) || heroId;
-      if (!resolvedHeroId) continue;
+    if (heroChoicesData) {
+      for (const hc of heroChoicesData) {
+        const chosenIds: string[] = (hc.chosen_encounters || []) as string[];
+        const pendingChoices: any[] = (hc.pending_choices || []) as any[];
+        const heroSnap = snapshots.find(s => s.heroId === hc.hero_id);
+        if (!heroSnap) continue;
 
-      // 交汇事件使用双人叙事
-      const narrativeText = encounter.tier === 'intersection' && intersectWith
-        ? encounter.narrative(heroName, intersectWith)
-        : encounter.narrative(heroName);
+        for (const chosenId of chosenIds) {
+          const choice = pendingChoices.find((c: any) => c.id === chosenId);
+          if (!choice) continue;
+          const effects = choice.effects || {};
+          events.push({
+            gameId, round: roundNumber,
+            heroId: hc.hero_id,
+            eventType: 'encounter',
+            narrative: choice.name,
+            hpDelta: effects.hp || 0,
+            repDelta: effects.reputation || 0,
+            hotDelta: effects.hot || 0,
+            data: { encounterId: chosenId, category: choice.category, martialArt: choice.martialArt },
+          } as any);
 
-      const targetHeroId = intersectWith ? getHeroIdByName(intersectWith) : undefined;
+          // Apply stat deltas
+          if (effects.hp) addDelta(updates, hc.hero_id, 'hp', effects.hp);
+          if (effects.reputation) addDelta(updates, hc.hero_id, 'reputation', effects.reputation);
+          if (effects.hot) addDelta(updates, hc.hero_id, 'hot', effects.hot);
+          if (effects.morality) addDelta(updates, hc.hero_id, 'morality', effects.morality);
+          if (effects.credit) addDelta(updates, hc.hero_id, 'credit', effects.credit);
 
-      events.push({
-        eventType: 'encounter',
-        priority: 4,
-        heroId: resolvedHeroId,
-        targetHeroId: targetHeroId || undefined,
-        narrative: narrativeText,
-        reputationDelta: encounter.effects.reputation || 0,
-        hotDelta: encounter.effects.hot || 0,
-        hpDelta: encounter.effects.hp || 0,
-        data: {
-          encounterId: encounter.id,
-          category: encounter.category,
-          tier: encounter.tier,
-          intersectWith: intersectWith || undefined,
-        },
-      } as any);
-
-      if (encounter.effects.hp) addDelta(updates, resolvedHeroId, 'hp', encounter.effects.hp);
-      if (encounter.effects.reputation) addDelta(updates, resolvedHeroId, 'reputation', encounter.effects.reputation);
-      if (encounter.effects.hot) addDelta(updates, resolvedHeroId, 'hot', encounter.effects.hot);
-      if (encounter.effects.morality) addDelta(updates, resolvedHeroId, 'morality', encounter.effects.morality);
-      if (encounter.effects.credit) addDelta(updates, resolvedHeroId, 'credit', encounter.effects.credit);
-
-      if (encounter.martialArt) {
-        addMartialArt(updates, resolvedHeroId, encounter.martialArt);
-        events.push({
-          eventType: 'encounter',
-          priority: 5,
-          heroId: resolvedHeroId,
-          narrative: `${heroName}习得新武学【${encounter.martialArt.name}】！（攻击+${encounter.martialArt.attackBonus}，防御+${encounter.martialArt.defenseBonus}）`,
-          data: { martialArt: encounter.martialArt },
-        } as any);
+          // Apply martial art bonuses
+          if (choice.martialArt) {
+            addMartialArt(updates, hc.hero_id, choice.martialArt);
+            events.push({
+              eventType: 'encounter',
+              priority: 5,
+              heroId: hc.hero_id,
+              narrative: `${heroSnap.heroName}习得新武学【${choice.martialArt.name}】！（攻击+${choice.martialArt.attackBonus}，防御+${choice.martialArt.defenseBonus}）`,
+              data: { martialArt: choice.martialArt },
+            } as any);
+          }
+        }
       }
     }
   }
