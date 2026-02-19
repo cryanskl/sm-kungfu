@@ -140,42 +140,45 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // === 更新 heroes 赛季积分 ===
-    for (const award of titleAwards) {
-      // 前三名都算胜场（盟主 + 声望前2/3）
-      const top3Ids = new Set<string>();
-      if (game.champion_hero_id) top3Ids.add(game.champion_hero_id);
-      for (let i = 0; i < Math.min(3, repSorted.length); i++) {
-        top3Ids.add(repSorted[i].hero_id);
-      }
+    // === 更新 heroes 赛季积分（批量化：1次SELECT + 并行UPDATE/UPSERT）===
+    const top3Ids = new Set<string>();
+    if (game.champion_hero_id) top3Ids.add(game.champion_hero_id);
+    for (let i = 0; i < Math.min(3, repSorted.length); i++) {
+      top3Ids.add(repSorted[i].hero_id);
+    }
+
+    const awardHeroIds = titleAwards.map(a => a.heroId);
+    const { data: heroStats } = await supabaseAdmin
+      .from('heroes')
+      .select('id, season_points, total_wins, total_games')
+      .in('id', awardHeroIds);
+    const heroStatsMap = new Map((heroStats || []).map(h => [h.id, h]));
+
+    await Promise.all(titleAwards.map(async (award) => {
+      const hero = heroStatsMap.get(award.heroId);
       const isTop3 = top3Ids.has(award.heroId);
       const isChampion = award.title === TITLES.CHAMPION.name;
+      const newPoints = (hero?.season_points || 0) + award.points;
+      const newWins = (hero?.total_wins || 0) + (isTop3 ? 1 : 0);
+      const newGames = (hero?.total_games || 0) + 1;
 
-      const { data: hero } = await supabaseAdmin
-        .from('heroes')
-        .select('season_points, total_wins, total_games')
-        .eq('id', award.heroId)
-        .single();
-
-      if (hero) {
-        await supabaseAdmin.from('heroes').update({
-          season_points: (hero.season_points || 0) + award.points,
-          total_wins: (hero.total_wins || 0) + (isTop3 ? 1 : 0),
-          total_games: (hero.total_games || 0) + 1,
-        }).eq('id', award.heroId);
-      }
-
-      // 更新排行榜
-      await supabaseAdmin.from('season_leaderboard').upsert({
-        hero_id: award.heroId,
-        hero_name: award.heroName,
-        faction: gameHeroes.find((g: any) => g.hero_id === award.heroId)?.hero?.faction || '少林',
-        season_points: (hero?.season_points || 0) + award.points,
-        champion_count: (hero?.total_wins || 0) + (isChampion ? 1 : 0),
-        total_games: (hero?.total_games || 0) + 1,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'hero_id' });
-    }
+      await Promise.all([
+        supabaseAdmin.from('heroes').update({
+          season_points: newPoints,
+          total_wins: newWins,
+          total_games: newGames,
+        }).eq('id', award.heroId),
+        supabaseAdmin.from('season_leaderboard').upsert({
+          hero_id: award.heroId,
+          hero_name: award.heroName,
+          faction: gameHeroes.find((g: any) => g.hero_id === award.heroId)?.hero?.faction || '少林',
+          season_points: newPoints,
+          champion_count: (hero?.total_wins || 0) + (isChampion ? 1 : 0),
+          total_games: newGames,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'hero_id' }),
+      ]);
+    }));
 
     // === 统一奖池制结算 ===
     // 奖池 = intro下注总额 + 神器购买总额
@@ -212,28 +215,31 @@ export async function POST(request: NextRequest) {
     // 构建 artifact_id → multiplier 映射
     const artifactMap = new Map(ARTIFACTS.map(a => [a.id, a]));
 
-    for (const gift of winnerGifts) {
+    // 批量结算赢家神器 + 发放奖金
+    const giftPayouts = winnerGifts.map(gift => {
       const artifactDef = artifactMap.get(gift.artifact_id);
       const multiplier = artifactDef?.multiplier ?? 2.0;
-      const payout = Math.floor(gift.amount * multiplier);
-      await supabaseAdmin.from('artifact_gifts').update({
-        settled: true,
-        payout,
-      }).eq('id', gift.id);
+      return { ...gift, payout: Math.floor(gift.amount * multiplier) };
+    });
 
-      // 发放奖金给登录用户
-      if (payout > 0) {
-        const { data: giftHero } = await supabaseAdmin
-          .from('heroes')
-          .select('id, balance, is_npc')
-          .eq('id', gift.audience_id)
-          .single();
-        if (giftHero && !giftHero.is_npc) {
-          await supabaseAdmin.from('heroes').update({
-            balance: (giftHero.balance ?? 10000) + payout,
-          }).eq('id', giftHero.id);
-        }
-      }
+    // 并行更新 artifact_gifts
+    await Promise.all(giftPayouts.map(g =>
+      supabaseAdmin.from('artifact_gifts').update({ settled: true, payout: g.payout }).eq('id', g.id)
+    ));
+
+    // 汇总每个赠送者的总奖金，批量查询 + 并行更新余额
+    const gifterTotalPayout = new Map<string, number>();
+    for (const g of giftPayouts) {
+      if (g.payout > 0) gifterTotalPayout.set(g.audience_id, (gifterTotalPayout.get(g.audience_id) || 0) + g.payout);
+    }
+    if (gifterTotalPayout.size > 0) {
+      const { data: gifters } = await supabaseAdmin
+        .from('heroes').select('id, balance, is_npc').in('id', [...gifterTotalPayout.keys()]);
+      await Promise.all((gifters || []).filter(g => !g.is_npc).map(gifter =>
+        supabaseAdmin.from('heroes').update({
+          balance: (gifter.balance ?? 10000) + (gifterTotalPayout.get(gifter.id) || 0),
+        }).eq('id', gifter.id)
+      ));
     }
 
     // 标记未中奖的神器赠送为已结算
@@ -390,20 +396,21 @@ export async function POST(request: NextRequest) {
       .gt('payout', 0);
 
     if (settledWinnerGifts && settledWinnerGifts.length > 0) {
+      // 批量查询所有赠送者名称
+      const gifterIds = [...new Set(settledWinnerGifts.map((g: any) => g.audience_id))];
+      const { data: gifterHeroes } = await supabaseAdmin
+        .from('heroes').select('id, hero_name').in('id', gifterIds);
+      const gifterNameMap = new Map((gifterHeroes || []).map(h => [h.id, h.hero_name]));
+
       for (const gift of settledWinnerGifts) {
-        const { data: gifter } = await supabaseAdmin
-          .from('heroes')
-          .select('hero_name, is_npc')
-          .eq('id', gift.audience_id)
-          .single();
         const betHeroName = heroNameMap.get(gift.hero_id) || '未知';
         const artDef = artifactMap.get(gift.artifact_id);
         betWinners.push({
-          displayName: gifter ? gifter.hero_name : gift.audience_id.slice(0, 8),
+          displayName: gifterNameMap.get(gift.audience_id) || gift.audience_id.slice(0, 8),
           betHeroName,
           amount: gift.amount,
           payout: gift.payout,
-          rank: 1, // 冠军方
+          rank: 1,
           multiplier: artDef?.multiplier,
         });
       }
@@ -452,6 +459,10 @@ export async function POST(request: NextRequest) {
       phase_started_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
+
+    // Reset influence_used for all participants
+    const endGameHeroIds = gameHeroes.map((gh: any) => gh.hero_id);
+    await supabaseAdmin.from('heroes').update({ influence_used: false }).in('id', endGameHeroIds);
 
     // === 60 秒后创建下一局 ===
     // 由前端驱动：前端看到 ended 状态后等 60 秒调 /api/game/join 自动创建新局

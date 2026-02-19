@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useWulinStore } from '@/stores/gameStore';
+import { useShallow } from 'zustand/react/shallow';
 import { DanmakuOverlay } from '@/components/game/DanmakuOverlay';
 import { DanmakuInput } from '@/components/game/DanmakuInput';
 import { GameHeader } from '@/components/game/GameHeader';
@@ -17,19 +18,28 @@ import { useEventRevealer } from '@/hooks/useEventRevealer';
 import { generateCommentary, generateWelcomeDanmaku, resetEliminationCount, generateCelebrationDanmaku } from '@/lib/game/commentary';
 
 export default function Home() {
-  const { user, setUser, gameState, setGameState, currentEvents, setCurrentEvents, startPolling, startSSE, stopSSE, pollNow, clearAudienceBets, clearLocalDanmaku, clearAudienceArtifact, addCommentaryDanmaku, addLocalDanmaku } = useWulinStore();
+  // 只订阅渲染需要的状态值（避免 danmaku/bet 等高频变更导致整组件重渲染）
+  const { user, gameState, currentEvents } = useWulinStore(
+    useShallow(s => ({ user: s.user, gameState: s.gameState, currentEvents: s.currentEvents }))
+  );
+  // 函数引用在 Zustand 中永远稳定，直接从 getState 取，不触发订阅
+  const { setUser, setGameState, setCurrentEvents, startPolling, startSSE, stopSSE, pollNow, clearAudienceBets, clearLocalDanmaku, clearAudienceArtifact, addCommentaryDanmaku, addLocalDanmaku, setMyEventsCompleted, submitChoices } = useWulinStore.getState();
 
   // UI state
   const [isInitLoading, setIsInitLoading] = useState(true);
   const [isJoining, setIsJoining] = useState(false);
   const [queueInfo, setQueueInfo] = useState<{ position: number; estimatedMinutes: number } | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isProcessing, _setIsProcessing] = useState(false);
+  const isProcessingRef = useRef(false);
+  // 同步更新 ref + state，确保 setTimeout/setInterval 中永远读到最新值
+  const setIsProcessing = useCallback((v: boolean) => { isProcessingRef.current = v; _setIsProcessing(v); }, []);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [roundTimer, setRoundTimer] = useState<number | null>(null);
   const [gossip, setGossip] = useState('');
   const [loadingLine, setLoadingLine] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [joinToast, setJoinToast] = useState<string | null>(null);
+  const [spectatorToast, setSpectatorToast] = useState<string | null>(null);
   const [introTimer, setIntroTimer] = useState<number | null>(null);
   const introTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [artifactTimer, setArtifactTimer] = useState<number | null>(null);
@@ -72,7 +82,7 @@ export default function Home() {
     const gameId = gameState?.gameId;
     if (!status || !gameId) return;
 
-    // round_2 ~ round_5: 揭晓完立即触发下一轮
+    // round_2 ~ round_5: 揭晓完立即触发下一轮的选择阶段
     if (status.startsWith('round_') && !roundTriggeredRef.current) {
       const nextRound = parseInt(status.split('_')[1]);
       if (!isNaN(nextRound) && nextRound >= 2 && nextRound <= 5) {
@@ -80,11 +90,102 @@ export default function Home() {
         // 取消备用定时器
         if (roundTimerRef.current) { clearInterval(roundTimerRef.current); roundTimerRef.current = null; }
         setRoundTimer(null);
-        // 1.5s 喘息后立即触发
-        timerRef.current = setTimeout(() => triggerRound(gameId, nextRound), 1500);
+        // 1.5s 喘息后进入选择阶段
+        timerRef.current = setTimeout(() => triggerChooseStart(gameId, nextRound), 1500);
       }
     }
   }, [isRevealing, gameState?.status, gameState?.gameId]);
+
+  // 兜底：轮询发现状态停留超时且未在处理中，强制触发
+  const stuckCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (stuckCheckRef.current) { clearInterval(stuckCheckRef.current); stuckCheckRef.current = null; }
+    const status = gameState?.status;
+    const gameId = gameState?.gameId;
+    if (!status || !gameId) return;
+
+    // round_2~5: >40s stuck → retry triggerRound
+    if (status.startsWith('round_')) {
+      const roundNum = parseInt(status.split('_')[1]);
+      if (!isNaN(roundNum) && roundNum >= 2 && roundNum <= 5) {
+        stuckCheckRef.current = setInterval(() => {
+          const elapsed = gameState?.phaseElapsedMs;
+          if (elapsed == null) return;
+          // 标准兜底：40s + 非处理中
+          if (elapsed > 40000 && !isProcessingRef.current && !isRevealing) {
+            console.warn(`[StuckDetector] round_${roundNum} stuck for ${elapsed}ms, force triggering`);
+            triggerRound(gameId, roundNum);
+          }
+          // 紧急兜底：60s 无论是否 isProcessing，强制重置并重试
+          if (elapsed > 60000 && isProcessingRef.current) {
+            console.warn(`[StuckDetector] round_${roundNum} EMERGENCY: processing stuck for ${elapsed}ms, force-resetting`);
+            setIsProcessing(false);
+            triggerRound(gameId, roundNum);
+          }
+        }, 5000);
+      }
+    }
+
+    // intro: >40s stuck → retry triggerChooseStart(1)
+    if (status === 'intro') {
+      stuckCheckRef.current = setInterval(() => {
+        const elapsed = gameState?.phaseElapsedMs;
+        if (elapsed != null && elapsed > 40000 && !isProcessingRef.current) {
+          console.warn(`[StuckDetector] intro stuck for ${elapsed}ms, force triggering choosing 1`);
+          triggerChooseStart(gameId, 1);
+        }
+      }, 5000);
+    }
+
+    // resolving_N: >30s stuck → re-trigger round resolution
+    if (status.startsWith('resolving_')) {
+      const roundNum = parseInt(status.split('_')[1]);
+      if (!isNaN(roundNum)) {
+        stuckCheckRef.current = setInterval(() => {
+          const elapsed = gameState?.phaseElapsedMs;
+          if (elapsed != null && elapsed > 30000 && !isProcessingRef.current) {
+            console.warn(`[StuckDetector] resolving_${roundNum} stuck for ${elapsed}ms, force triggering`);
+            triggerRound(gameId, roundNum);
+          }
+        }, 5000);
+      }
+    }
+
+    // semifinals: >40s stuck → retry triggerFinals
+    if (status === 'semifinals') {
+      stuckCheckRef.current = setInterval(() => {
+        const elapsed = gameState?.phaseElapsedMs;
+        if (elapsed != null && elapsed > 40000 && !isProcessingRef.current) {
+          console.warn(`[StuckDetector] semifinals stuck for ${elapsed}ms, force triggering finals`);
+          triggerFinals(gameId);
+        }
+      }, 5000);
+    }
+
+    return () => { if (stuckCheckRef.current) { clearInterval(stuckCheckRef.current); stuckCheckRef.current = null; } };
+  }, [gameState?.status, gameState?.gameId]);
+
+  // 选择阶段截止后自动触发回合解算
+  useEffect(() => {
+    const status = gameState?.status;
+    const gameId = gameState?.gameId;
+    if (!status || !gameId || !status.startsWith('choosing_')) return;
+
+    const roundNumber = parseInt(status.split('_')[1]);
+    if (isNaN(roundNumber)) return;
+
+    const deadline = gameState?.choosingDeadline;
+    if (!deadline) return;
+
+    const timeUntilDeadline = new Date(deadline).getTime() - Date.now();
+    const delay = Math.max(0, timeUntilDeadline + 1000); // 1s grace after deadline
+
+    const timer = setTimeout(() => {
+      triggerRound(gameId, roundNumber);
+    }, delay);
+
+    return () => clearTimeout(timer);
+  }, [gameState?.status, gameState?.choosingDeadline]);
 
   // === Init: 并行拉取 auth + game state，消除白屏 ===
   // 优先使用 SSE 实时推送，失败降级到轮询
@@ -110,11 +211,14 @@ export default function Home() {
       if (countdownRef.current) clearInterval(countdownRef.current);
       if (roundTimerRef.current) clearInterval(roundTimerRef.current);
       if (introTimerRef.current) clearInterval(introTimerRef.current);
+      if (stuckCheckRef.current) clearInterval(stuckCheckRef.current);
       if (artifactTimerRef.current) clearInterval(artifactTimerRef.current);
       if (finalRetryRef.current) clearInterval(finalRetryRef.current);
+      if (endRetryRef.current) clearInterval(endRetryRef.current);
       if (endingTimerRef.current) clearInterval(endingTimerRef.current);
       if (endedTimerRef.current) clearInterval(endedTimerRef.current);
       commentaryTimersRef.current.forEach(t => clearTimeout(t));
+      welcomeTimersRef.current.forEach(t => clearTimeout(t));
     };
   }, []);
 
@@ -213,9 +317,9 @@ export default function Home() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ gameId, roundNumber: 1 }),
       }).catch(() => {});
-      // 10s 触发，减去已过时间
+      // 10s 触发，减去已过时间 — 进入选择阶段而非直接解算
       const triggerDelay = Math.max(0, 10000 - elapsed * 1000);
-      timerRef.current = setTimeout(() => triggerRound(gameId, 1), triggerDelay);
+      timerRef.current = setTimeout(() => triggerChooseStart(gameId, 1), triggerDelay);
     }
 
     if (status.startsWith('round_')) {
@@ -420,6 +524,28 @@ export default function Home() {
     }
   }, [gameState?.recentEvents]);
 
+  // 角色阵亡自动切换旁观视角
+  const wasEliminatedRef = useRef(false);
+  useEffect(() => {
+    const heroes = gameState?.heroes;
+    const myId = user.heroId;
+    if (!heroes || !myId) return;
+    const myHero = heroes.find(h => h.heroId === myId);
+    if (!myHero) return;
+    if (myHero.isEliminated && !wasEliminatedRef.current) {
+      wasEliminatedRef.current = true;
+      // 切换到声望最高的存活英雄
+      const alive = heroes.filter(h => !h.isEliminated).sort((a, b) => (b.reputation || 0) - (a.reputation || 0));
+      if (alive.length > 0) {
+        useWulinStore.setState({ viewingHeroId: alive[0].heroId });
+      }
+      setSpectatorToast('你的角色已阵亡，切换至旁观模式');
+      setTimeout(() => setSpectatorToast(null), 4000);
+    }
+    // 新一局重置
+    if (!myHero.isEliminated) wasEliminatedRef.current = false;
+  }, [gameState?.heroes, user.heroId]);
+
   // Commentary danmaku — synced to event reveal rhythm
   const lastRevealedCountRef = useRef(0);
   const prevIsRevealingRef = useRef(false);
@@ -527,18 +653,23 @@ export default function Home() {
       } else if (res.ok) {
         setJoinToast('入座成功！等待其他侠客加入…');
         setTimeout(() => setJoinToast(null), 3000);
+        pollNow();
       } else {
         setErrorMsg(data.error || '入座失败');
+        setIsQueued(false);
       }
-    } catch { setErrorMsg('网络错误'); }
+    } catch {
+      setErrorMsg('网络错误');
+      setIsQueued(false);
+    }
     setIsJoining(false);
-  }, [user]);
+  }, [user, pollNow]);
 
   const handleLeave = useCallback(async () => {
     setIsLeaving(true);
     try {
       const res = await fetch('/api/game/leave', { method: 'POST' });
-      if (res.ok) { pollNow(); } else {
+      if (res.ok) { await pollNow(); } else {
         const data = await res.json();
         setErrorMsg(data.error || '退出失败');
       }
@@ -547,10 +678,12 @@ export default function Home() {
   }, [pollNow]);
 
   const triggerStart = useCallback(async (gameId: string) => {
-    if (isProcessing) return;
+    if (isProcessingRef.current) return;
     setIsProcessing(true);
+    const ac = new AbortController();
+    const tm = setTimeout(() => ac.abort(), 30000);
     try {
-      const res = await fetch('/api/engine/start', { method: 'POST' });
+      const res = await fetch('/api/engine/start', { method: 'POST', signal: ac.signal });
       if (res.ok) {
         const data = await res.json();
         if (data.gameState) setGameState(data.gameState);
@@ -560,20 +693,23 @@ export default function Home() {
         pollNow();
       }
     } catch (e) { console.error('Start error:', e); pollNow(); }
-    setIsProcessing(false);
-  }, [isProcessing, setGameState, pollNow]);
+    finally { clearTimeout(tm); setIsProcessing(false); }
+  }, [setGameState, pollNow]);
 
   const triggerRound = useCallback(async (gameId: string, roundNumber: number) => {
-    if (isProcessing) return;
+    if (isProcessingRef.current) return;
     setIsProcessing(true);
     setGossip(GOSSIP_LINES[Math.floor(Math.random() * GOSSIP_LINES.length)]);
     setLoadingLine(LOADING_LINES[Math.floor(Math.random() * LOADING_LINES.length)]);
     const snapshot = useWulinStore.getState().gameState?.heroes || [];
+    const ac = new AbortController();
+    const tm = setTimeout(() => ac.abort(), 30000);
     try {
       const res = await fetch('/api/engine/round', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ gameId, roundNumber }),
+        signal: ac.signal,
       });
       const data = await res.json();
       if (data.gameState) setGameState(data.gameState);
@@ -584,22 +720,50 @@ export default function Home() {
         : (data.gameState?.recentEvents || []);
       if (evts.length > 0) {
         setCurrentEvents(evts);
-        startReveal(evts, snapshot, 35000);
+        setMyEventsCompleted(false);
+        const viewId = useWulinStore.getState().viewingHeroId || useWulinStore.getState().user.heroId || null;
+        startReveal(evts, snapshot, 35000, viewId, () => setMyEventsCompleted(true));
       }
     } catch (e) { console.error('Round error:', e); pollNow(); }
-    setIsProcessing(false);
-  }, [isProcessing, startReveal, setGameState, pollNow]);
+    finally { clearTimeout(tm); setIsProcessing(false); }
+  }, [startReveal, setGameState, pollNow, setMyEventsCompleted]);
+
+  const triggerChooseStart = useCallback(async (gameId: string, roundNumber: number) => {
+    if (isProcessingRef.current) return;
+    setIsProcessing(true);
+    try {
+      const res = await fetch('/api/engine/choose-start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, roundNumber }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.gameState) setGameState(data.gameState);
+        else pollNow();
+      } else { pollNow(); }
+    } catch (e) { console.error('ChooseStart error:', e); pollNow(); }
+    finally { setIsProcessing(false); }
+  }, [setGameState, pollNow]);
+
+  const handleSubmitChoices = useCallback(async (encounterIds: string[]) => {
+    if (!gameState?.gameId) return;
+    await submitChoices(gameState.gameId, encounterIds);
+  }, [gameState?.gameId, submitChoices]);
 
   const triggerFinals = useCallback(async (gameId: string) => {
-    if (isProcessing) return;
+    if (isProcessingRef.current) return;
     setIsProcessing(true);
     setLoadingLine(LOADING_LINES[Math.floor(Math.random() * LOADING_LINES.length)]);
     const snapshot = useWulinStore.getState().gameState?.heroes || [];
+    const ac = new AbortController();
+    const tm = setTimeout(() => ac.abort(), 30000);
     try {
       const res = await fetch('/api/engine/finals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ gameId }),
+        signal: ac.signal,
       });
       const data = await res.json();
       if (data.gameState) setGameState(data.gameState);
@@ -609,21 +773,26 @@ export default function Home() {
         : (data.gameState?.recentEvents || []);
       if (evts.length > 0) {
         setCurrentEvents(evts);
-        startReveal(evts, snapshot, 10000);
+        setMyEventsCompleted(false);
+        const viewId = useWulinStore.getState().viewingHeroId || useWulinStore.getState().user.heroId || null;
+        startReveal(evts, snapshot, 10000, viewId, () => setMyEventsCompleted(true));
       }
     } catch (e) { console.error('Finals error:', e); pollNow(); }
-    setIsProcessing(false);
-  }, [isProcessing, startReveal, setGameState, pollNow]);
+    finally { clearTimeout(tm); setIsProcessing(false); }
+  }, [startReveal, setGameState, pollNow, setMyEventsCompleted]);
 
   const triggerFinal = useCallback(async (gameId: string) => {
-    if (isProcessing) return;
+    if (isProcessingRef.current) return;
     setIsProcessing(true);
     const snapshot = useWulinStore.getState().gameState?.heroes || [];
+    const ac = new AbortController();
+    const tm = setTimeout(() => ac.abort(), 30000);
     try {
       const res = await fetch('/api/engine/final', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ gameId }),
+        signal: ac.signal,
       });
       const data = await res.json();
       if (data.gameState) setGameState(data.gameState);
@@ -633,11 +802,13 @@ export default function Home() {
         : (data.gameState?.recentEvents || []);
       if (evts.length > 0) {
         setCurrentEvents(evts);
-        startReveal(evts, snapshot, 10000);
+        setMyEventsCompleted(false);
+        const viewId = useWulinStore.getState().viewingHeroId || useWulinStore.getState().user.heroId || null;
+        startReveal(evts, snapshot, 10000, viewId, () => setMyEventsCompleted(true));
       }
     } catch (e) { console.error('Final error:', e); pollNow(); }
-    setIsProcessing(false);
-  }, [isProcessing, startReveal, setGameState, pollNow]);
+    finally { clearTimeout(tm); setIsProcessing(false); }
+  }, [startReveal, setGameState, pollNow, setMyEventsCompleted]);
 
   const triggerEnd = useCallback(async (gameId: string) => {
     try {
@@ -668,6 +839,7 @@ export default function Home() {
   const repRanking = isRevealing ? progressiveRepRanking : (gameState?.reputationRanking || []);
   const hotRanking = isRevealing ? progressiveHotRanking : (gameState?.hotRanking || []);
   const isGameActive = status.startsWith('round_') || status.startsWith('processing_') ||
+    status.startsWith('choosing_') || status.startsWith('resolving_') ||
     status === 'intro' || status === 'semifinals' || status === 'artifact_selection' || status === 'final' || status === 'ending';
   const isParticipant = user.isLoggedIn && gameState?.heroes?.some(h => h.heroId === user.heroId);
 
@@ -744,6 +916,7 @@ export default function Home() {
             revealedEvents={revealedEvents}
             roundTimer={roundTimer}
             onSkipReveal={skipReveal}
+            onSubmitChoices={handleSubmitChoices}
           />
         )}
 
@@ -777,6 +950,7 @@ export default function Home() {
         )}
 
         {joinToast && <div className="toast-wuxia">{joinToast}</div>}
+        {spectatorToast && <div className="toast-wuxia">{spectatorToast}</div>}
       </main>
 
       <footer className="footer-wuxia">

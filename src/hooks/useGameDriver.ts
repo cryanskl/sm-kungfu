@@ -42,6 +42,22 @@ export function useGameDriver() {
     setIsProcessing(false);
   }, [isProcessing]);
 
+  // 触发选择阶段（choosing_N）
+  const triggerChooseStart = useCallback(async (gameId: string, roundNumber: number) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+    try {
+      await fetch('/api/engine/choose-start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, roundNumber }),
+      });
+    } catch (e) {
+      console.error('triggerChooseStart failed:', e);
+    }
+    setIsProcessing(false);
+  }, [isProcessing]);
+
   // 触发回合（intro 结束后 → R1，R1 结束后 → R2，...）
   const triggerRound = useCallback(async (gameId: string, roundNumber: number) => {
     if (isProcessing) return;
@@ -60,5 +76,5 @@ export function useGameDriver() {
     setIsProcessing(false);
   }, [isProcessing]);
 
-  return { countdown, isProcessing, triggerStart, triggerRound };
+  return { countdown, isProcessing, triggerStart, triggerChooseStart, triggerRound };
 }
