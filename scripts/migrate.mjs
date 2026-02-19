@@ -175,6 +175,18 @@ async function checkFunction() {
   }
 }
 
+async function checkP5Column() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/game_state?select=choosing_deadline&id=eq.current`, {
+      headers: { 'apikey': SERVICE_KEY, 'Authorization': `Bearer ${SERVICE_KEY}` },
+    });
+    const data = await res.json();
+    return !data?.message?.includes('choosing_deadline');
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   console.log('🏗️  AI 武林大会 · 数据库迁移');
   console.log('=' .repeat(50));
@@ -184,12 +196,14 @@ async function main() {
   const colExists = await checkColumn();
   const rlsEnabled = await checkRLS();
   const fnExists = await checkFunction();
+  const p5Exists = await checkP5Column();
 
   console.log(`  audience_influence 列: ${colExists ? '✅ 已存在' : '❌ 未创建'}`);
   console.log(`  RLS 保护:             ${rlsEnabled ? '✅ 已启用' : '❌ 未启用'}`);
   console.log(`  deduct_balance 函数:  ${fnExists ? '✅ 已存在' : '❌ 未创建'}`);
+  console.log(`  P5 交互式选择列:      ${p5Exists ? '✅ 已存在' : '❌ 未创建'}`);
 
-  if (colExists && rlsEnabled && fnExists) {
+  if (colExists && rlsEnabled && fnExists && p5Exists) {
     console.log('\n✅ 迁移已完成，无需操作！');
     return;
   }
