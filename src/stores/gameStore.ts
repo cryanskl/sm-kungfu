@@ -42,8 +42,6 @@ interface WulinStore {
   stopSSE: () => void;
 
   // 前端播放状态
-  displayPhase: 'idle' | 'director' | 'decision' | 'resolution' | 'update';
-  setDisplayPhase: (phase: WulinStore['displayPhase']) => void;
   currentEvents: GameEvent[];
   setCurrentEvents: (events: GameEvent[]) => void;
 
@@ -71,6 +69,13 @@ interface WulinStore {
   audienceArtifact: AudienceArtifact | null;
   setAudienceArtifact: (artifact: AudienceArtifact) => void;
   clearAudienceArtifact: () => void;
+
+  // P5: 交互式回合选择
+  chosenEncounterIds: string[];
+  influenceUsed: boolean;
+  submitChoices: (gameId: string, encounterIds: string[]) => Promise<boolean>;
+  submitInfluence: (targetHeroId: string, effectType: 'buff' | 'debuff') => Promise<boolean>;
+  resetChoices: () => void;
 }
 
 export const useWulinStore = create<WulinStore>((set, get) => ({
@@ -80,7 +85,19 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
 
   // 游戏状态
   gameState: null,
-  setGameState: (gameState) => set({ gameState }),
+  setGameState: (gameState) => {
+    const prev = get().gameState;
+    const updates: Partial<WulinStore> = { gameState };
+    // Reset choices when leaving choosing_* phase
+    if (
+      prev?.status?.startsWith('choosing_') &&
+      !gameState.status?.startsWith('choosing_')
+    ) {
+      updates.chosenEncounterIds = [];
+      updates.influenceUsed = false;
+    }
+    set(updates as any);
+  },
 
   // 轮询
   isPolling: false,
@@ -93,7 +110,7 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
       const res = await fetch('/api/game/state');
       if (res.ok) {
         const data = await res.json();
-        set({ gameState: data });
+        get().setGameState(data);
       }
     } catch { /* ignore */ }
 
@@ -111,7 +128,7 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
         const res = await fetch('/api/game/state');
         if (res.ok) {
           const data = await res.json();
-          set({ gameState: data });
+          get().setGameState(data);
         }
       } catch { /* ignore */ }
 
@@ -127,7 +144,7 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
       const res = await fetch('/api/game/state');
       if (res.ok) {
         const data = await res.json();
-        set({ gameState: data });
+        get().setGameState(data);
       }
     } catch { /* ignore */ }
   },
@@ -141,7 +158,7 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
     es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        set({ gameState: data });
+        get().setGameState(data);
         // SSE 连接成功，停止轮询
         if (firstMessage) {
           firstMessage = false;
@@ -166,8 +183,6 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
   },
 
   // 前端播放
-  displayPhase: 'idle',
-  setDisplayPhase: (displayPhase) => set({ displayPhase }),
   currentEvents: [],
   setCurrentEvents: (currentEvents) => set({ currentEvents }),
 
@@ -214,4 +229,33 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
   audienceArtifact: null,
   setAudienceArtifact: (artifact) => set({ audienceArtifact: artifact }),
   clearAudienceArtifact: () => set({ audienceArtifact: null }),
+
+  // P5: 交互式回合选择
+  chosenEncounterIds: [],
+  influenceUsed: false,
+  submitChoices: async (gameId: string, encounterIds: string[]) => {
+    const res = await fetch('/api/game/choose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gameId, encounterIds }),
+    });
+    if (res.ok) {
+      set({ chosenEncounterIds: encounterIds });
+      return true;
+    }
+    return false;
+  },
+  submitInfluence: async (targetHeroId: string, effectType: 'buff' | 'debuff') => {
+    const res = await fetch('/api/audience/influence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetHeroId, effectType }),
+    });
+    if (res.ok) {
+      set({ influenceUsed: true });
+      return true;
+    }
+    return false;
+  },
+  resetChoices: () => set({ chosenEncounterIds: [] }),
 }));

@@ -1,11 +1,12 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { mapGameStateRow, computeDynamicFields } from '@/lib/game/state-mapper';
+import { getHeroIdFromCookies } from '@/lib/auth';
 
 export const revalidate = 0;
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const { data, error } = await supabaseAdmin
     .from('game_state')
     .select('*')
@@ -46,6 +47,22 @@ export async function GET() {
 
   const gameState = mapGameStateRow(data);
   const withDynamic = computeDynamicFields(gameState, data);
+
+  // Inject player-specific pending choices during choosing phase
+  if (withDynamic.status?.startsWith('choosing_')) {
+    const { heroId } = getHeroIdFromCookies(request.cookies);
+    if (heroId && withDynamic.gameId) {
+      const { data: gh } = await supabaseAdmin
+        .from('game_heroes')
+        .select('pending_choices')
+        .eq('game_id', withDynamic.gameId)
+        .eq('hero_id', heroId)
+        .single();
+      if (gh?.pending_choices) {
+        withDynamic.pendingChoices = gh.pending_choices;
+      }
+    }
+  }
 
   return NextResponse.json(withDynamic, {
     headers: {
