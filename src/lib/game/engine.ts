@@ -79,7 +79,7 @@ export async function prefetchDecisions(gameId: string, roundNumber: number): Pr
 // ============================================================
 
 export async function startChoosing(gameId: string, roundNumber: number): Promise<{ success: boolean; error?: string }> {
-  const expectedStatus = roundNumber === 1 ? 'intro' : `round_${roundNumber - 1}`;
+  const expectedStatus = roundNumber === 1 ? 'intro' : `round_${roundNumber}`;
   const choosingStatus = `choosing_${roundNumber}`;
 
   // Optimistic lock
