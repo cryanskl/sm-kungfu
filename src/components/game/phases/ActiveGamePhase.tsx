@@ -7,6 +7,7 @@ import { EventFeed } from '@/components/game/EventFeed';
 import { RankingPanel } from '@/components/game/RankingPanel';
 import { RelationshipGraph } from '@/components/game/RelationshipGraph';
 import { FloatingText } from '@/components/game/FloatingText';
+import { useWulinStore } from '@/stores/gameStore';
 
 interface ActiveGamePhaseProps {
   gameState: GameState | null;
@@ -31,6 +32,19 @@ export function ActiveGamePhase({
   const [showDetail, setShowDetail] = useState<string | null>(null);
   const liveHeroes = gameState?.heroes || [];
   const aliveCount = liveHeroes.filter(h => !h.isEliminated).length;
+
+  const { viewingHeroId, setViewingHero, myEventsCompleted, user } = useWulinStore();
+
+  // 当前用户的 heroId
+  const myHeroId = user.heroId;
+  // 实际展示的视角 ID（null 表示自己 / 全局）
+  const activeViewId = viewingHeroId || myHeroId;
+
+  // 按视角过滤事件用于高亮显示
+  const isEventRelated = (event: Partial<GameEvent>) => {
+    if (!activeViewId) return true;
+    return event.heroId === activeViewId || event.targetHeroId === activeViewId;
+  };
 
   return (
     <div className="grid grid-cols-12 gap-4 lg:gap-6 phase-enter">
@@ -63,6 +77,45 @@ export function ActiveGamePhase({
 
       {/* Center: Event Feed — first on mobile */}
       <div className="col-span-12 lg:col-span-5 order-1 lg:order-2 flex flex-col">
+        {/* P1: 视角切换栏 */}
+        <div className="flex items-center gap-1.5 mb-3 px-1 flex-wrap">
+          <span className="text-[10px] text-[--text-dim] mr-1">视角:</span>
+          {/* 自己视角 */}
+          <button
+            onClick={() => setViewingHero(null)}
+            className={`w-6 h-6 rounded-full border-2 transition-all text-[10px] flex items-center justify-center
+              ${!viewingHeroId ? 'border-gold bg-gold/20 text-gold shadow-gold-glow' : 'border-ink-light/30 text-[--text-dim] hover:border-ink-light/60'}`}
+            title="我的视角"
+          >
+            我
+          </button>
+          {liveHeroes.filter(h => !h.isEliminated).map((hero) => {
+            const isActive = viewingHeroId === hero.heroId;
+            const isMe = hero.heroId === myHeroId;
+            const canSwitch = myEventsCompleted || isMe || !myHeroId;
+            return (
+              <button
+                key={hero.heroId}
+                onClick={() => canSwitch && setViewingHero(hero.heroId)}
+                disabled={!canSwitch}
+                className={`w-6 h-6 rounded-full border-2 transition-all text-[10px] flex items-center justify-center
+                  ${isActive ? 'border-gold bg-gold/20 text-gold shadow-gold-glow' : ''}
+                  ${!isActive && canSwitch ? 'border-ink-light/30 text-[--text-dim] hover:border-ink-light/60' : ''}
+                  ${!canSwitch ? 'border-ink-light/10 text-ink-light/20 cursor-not-allowed' : 'cursor-pointer'}`}
+                title={`${hero.heroName}${!canSwitch ? ' (看完自己的事件后解锁)' : ''}`}
+              >
+                {hero.heroName.charAt(0)}
+              </button>
+            );
+          })}
+          {myHeroId && !myEventsCompleted && isRevealing && (
+            <span className="text-[10px] text-[--text-dim] ml-1">事件揭示中…</span>
+          )}
+          {myHeroId && myEventsCompleted && (
+            <span className="text-[10px] text-gold ml-1">可切换观战</span>
+          )}
+        </div>
+
         {(() => {
           // Loading indicator: show during API processing OR when waiting between rounds (after reveal, timer counting down)
           const isWaitingForNextRound = !isProcessing && !isRevealing && roundTimer !== null && roundTimer > 0;
@@ -87,10 +140,19 @@ export function ActiveGamePhase({
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-display font-bold text-sm tracking-wider flex items-center gap-2">
               <span>📜</span> 江湖快报
+              {activeViewId && viewingHeroId && (
+                <span className="text-[10px] text-gold font-normal">
+                  — {liveHeroes.find(h => h.heroId === activeViewId)?.heroName || ''}视角
+                </span>
+              )}
             </h3>
-            {/* skip button removed */}
           </div>
-          <EventFeed events={events} highlightLatest={isRevealing || revealedEvents.length > 0} activeReveal={isRevealing} />
+          <EventFeed
+            events={events}
+            highlightLatest={isRevealing || revealedEvents.length > 0}
+            activeReveal={isRevealing}
+            highlightHeroId={activeViewId || undefined}
+          />
         </div>
       </div>
 

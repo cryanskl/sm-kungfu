@@ -127,6 +127,28 @@ export function EndedPhase({
         <RankingPanel title="最终热搜榜" icon="🔥" entries={gameState?.hotRanking || []} />
       </div>
 
+      {(gameState?.newAchievements?.length ?? 0) > 0 && (
+        <div className="max-w-4xl mx-auto mb-6">
+          <div className="card-wuxia p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <span>🏅</span>
+              <h3 className="font-display font-bold text-sm tracking-wide brush-underline">成就解锁</h3>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {gameState!.newAchievements.map((a, i) => (
+                <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gold/5 border border-gold/20 animate-seal-stamp">
+                  <span className="text-xl">{a.icon}</span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-gold truncate">{a.achievementName}</div>
+                    <div className="text-[10px] text-[--text-dim] truncate">{a.heroName} · +{a.points}分</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {((gameState?.betWinners?.length ?? 0) > 0 || (gameState?.balanceRanking?.length ?? 0) > 0) && (
         <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           {(gameState?.betWinners?.length ?? 0) > 0 && (

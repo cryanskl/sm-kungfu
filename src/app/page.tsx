@@ -17,7 +17,7 @@ import { useEventRevealer } from '@/hooks/useEventRevealer';
 import { generateCommentary, generateWelcomeDanmaku, resetEliminationCount, generateCelebrationDanmaku } from '@/lib/game/commentary';
 
 export default function Home() {
-  const { user, setUser, gameState, setGameState, currentEvents, setCurrentEvents, startPolling, pollNow, clearAudienceBets, clearLocalDanmaku, clearAudienceArtifact, addCommentaryDanmaku, addLocalDanmaku } = useWulinStore();
+  const { user, setUser, gameState, setGameState, currentEvents, setCurrentEvents, startPolling, startSSE, stopSSE, pollNow, clearAudienceBets, clearLocalDanmaku, clearAudienceArtifact, addCommentaryDanmaku, addLocalDanmaku } = useWulinStore();
 
   // UI state
   const [isInitLoading, setIsInitLoading] = useState(true);
@@ -87,6 +87,7 @@ export default function Home() {
   }, [isRevealing, gameState?.status, gameState?.gameId]);
 
   // === Init: 并行拉取 auth + game state，消除白屏 ===
+  // 优先使用 SSE 实时推送，失败降级到轮询
   useEffect(() => {
     const init = async () => {
       await Promise.all([
@@ -95,12 +96,16 @@ export default function Home() {
             setUser({ userId: data.user.userId, heroId: data.hero.id, hero: data.hero, isLoggedIn: true });
           }
         }).catch(() => {}),
+        // 先用轮询拉取首屏数据，再启动 SSE
         startPolling(),
       ]);
+      // SSE 就绪后停止轮询，SSE onerror 会自动 fallback 回轮询
+      startSSE();
       setIsInitLoading(false);
     };
     init();
     return () => {
+      stopSSE();
       if (timerRef.current) clearTimeout(timerRef.current);
       if (countdownRef.current) clearInterval(countdownRef.current);
       if (roundTimerRef.current) clearInterval(roundTimerRef.current);

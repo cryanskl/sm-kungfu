@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { getHeroIdFromCookies } from '@/lib/auth';
+import { getHeroAchievements } from '@/lib/game/achievements';
 
 export async function GET(request: NextRequest) {
   const { userId, heroId } = getHeroIdFromCookies(request.cookies);
@@ -14,6 +15,12 @@ export async function GET(request: NextRequest) {
     .select('*')
     .eq('id', heroId)
     .single();
+
+  // Fetch achievements
+  let achievements: any[] = [];
+  try {
+    achievements = await getHeroAchievements(heroId);
+  } catch { /* ignore */ }
 
   return NextResponse.json({
     user: { userId },
@@ -34,6 +41,9 @@ export async function GET(request: NextRequest) {
       totalWins: hero.total_wins,
       totalGames: hero.total_games,
       balance: hero.balance ?? 10000,
+      characterConfig: hero.character_config || null,
+      lastCharacterEdit: hero.last_character_edit || null,
+      achievements,
     } : null,
   });
 }

@@ -57,6 +57,22 @@ const MIGRATION_SQL = [
   `ALTER TABLE activity_log ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE artifact_gifts ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS phase_started_at TIMESTAMPTZ`,
+  // P2: 成就系统
+  `CREATE TABLE IF NOT EXISTS hero_achievements (
+    hero_id UUID REFERENCES heroes(id) ON DELETE CASCADE,
+    achievement_id TEXT NOT NULL,
+    unlocked_at TIMESTAMPTZ DEFAULT NOW(),
+    game_id UUID REFERENCES games(id),
+    PRIMARY KEY (hero_id, achievement_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_achievements_hero ON hero_achievements(hero_id)`,
+  `ALTER TABLE heroes ADD COLUMN IF NOT EXISTS lifetime_stats JSONB DEFAULT '{}'`,
+  // P4: 角色编辑器
+  `ALTER TABLE heroes ADD COLUMN IF NOT EXISTS character_config JSONB DEFAULT NULL`,
+  `ALTER TABLE heroes ADD COLUMN IF NOT EXISTS quiz_answers JSONB DEFAULT NULL`,
+  `ALTER TABLE heroes ADD COLUMN IF NOT EXISTS last_character_edit TIMESTAMPTZ DEFAULT NULL`,
+  // P2: 成就写入 game_state
+  `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS new_achievements JSONB DEFAULT '[]'`,
 ];
 
 async function tryExecSQL(sql) {

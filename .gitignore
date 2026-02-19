@@ -22,3 +22,4 @@ docs/
 # misc
 .DS_Store
 *.tsbuildinfo
+.claude/

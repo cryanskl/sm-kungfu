@@ -5,6 +5,7 @@ import { GameState, GameHeroSnapshot } from '@/lib/types';
 import { HeroCard } from '@/components/game/HeroCard';
 import { LastGameTop8, LastGameHighlights } from '@/components/game/LastGameReview';
 import { COUNTDOWN_POEMS } from '@/lib/game/constants';
+import { CharacterEditor } from '@/components/game/CharacterEditor';
 
 interface WaitingPhaseProps {
   gameState: GameState | null;
@@ -20,6 +21,7 @@ export function WaitingPhase({
   gameState, heroes, countdown, isJoining, errorMsg, isLoggedIn, onJoin,
 }: WaitingPhaseProps) {
   const hasLastGame = (gameState?.lastGameTop8?.length ?? 0) > 0;
+  const [showEditor, setShowEditor] = useState(false);
 
   // 古诗词轮换（每5秒换一首，带淡入动画）
   const [poemIndex, setPoemIndex] = useState(() =>
@@ -108,6 +110,14 @@ export function WaitingPhase({
                 <p className="text-sm text-[--text-dim]">或留在此处围观比赛实况</p>
               </div>
             )}
+            {isLoggedIn && (
+              <button
+                onClick={() => setShowEditor(true)}
+                className="btn-ghost text-sm mt-2 inline-block"
+              >
+                🎭 角色设定
+              </button>
+            )}
             <p className="text-xs text-[--text-dim] mt-3 tracking-wide">无需登录即可围观 · 登录后你的 AI 自动参战</p>
             {errorMsg && <p className="text-vermillion text-sm mt-2">{errorMsg}</p>}
           </div>
@@ -131,6 +141,7 @@ export function WaitingPhase({
           <LastGameHighlights events={gameState?.lastGameHighlights || []} />
         </div>
       )}
+      <CharacterEditor isOpen={showEditor} onClose={() => setShowEditor(false)} />
     </div>
   );
 }

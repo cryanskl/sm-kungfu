@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { TITLES, ARTIFACTS } from '@/lib/game/constants';
 import { mapGameStateRow } from '@/lib/game/state-mapper';
 import { computeBattleStats } from '@/lib/game/battle-stats';
+import { evaluateAndAwardAchievements } from '@/lib/game/achievements';
 import { requireSession } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
@@ -305,6 +306,16 @@ export async function POST(request: NextRequest) {
 
     const battleStats = computeBattleStats(allGameEvents || [], heroNameMap);
 
+    // === 成就评估 ===
+    let newAchievements: any[] = [];
+    try {
+      newAchievements = await evaluateAndAwardAchievements(
+        gameId, gameHeroes, allGameEvents || [], titleAwards, battleStats
+      );
+    } catch (err) {
+      console.error('Achievement evaluation error:', err);
+    }
+
     // Fill in bestSurvivor (highest HP among non-eliminated)
     const survivors = gameHeroes
       .filter((gh: any) => !gh.is_eliminated)
@@ -437,6 +448,7 @@ export async function POST(request: NextRequest) {
       bet_winners: betWinners,
       balance_ranking: balanceRanking,
       battle_stats: battleStats,
+      new_achievements: newAchievements,
       phase_started_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });

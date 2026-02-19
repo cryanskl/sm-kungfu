@@ -47,7 +47,7 @@ function getEventBg(event: Partial<GameEvent>): string {
   return 'bg-ink-dark/30';
 }
 
-export function EventFeed({ events, highlightLatest, activeReveal }: { events: Partial<GameEvent>[]; highlightLatest?: boolean; activeReveal?: boolean }) {
+export function EventFeed({ events, highlightLatest, activeReveal, highlightHeroId }: { events: Partial<GameEvent>[]; highlightLatest?: boolean; activeReveal?: boolean; highlightHeroId?: string }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastEventRef = useRef<HTMLDivElement>(null);
   const [hasAnimated, setHasAnimated] = useState(false);
@@ -86,13 +86,14 @@ export function EventFeed({ events, highlightLatest, activeReveal }: { events: P
       <div ref={scrollRef} className="space-y-2 max-h-[600px] overflow-y-auto pr-2 scroll-fade">
         {filtered.map((event, i) => {
           const isLast = i === filtered.length - 1;
+          const isHeroEvent = highlightHeroId && (event.heroId === highlightHeroId || event.targetHeroId === highlightHeroId);
           return (
             <div
               key={`c-${i}`}
               ref={isLast ? lastEventRef : undefined}
               className={`p-3 rounded-lg animate-fade-in-up ${getEventBg(event)} ${
                 isLast && activeReveal ? 'reveal-pulse ring-1 ring-gold/40' : ''
-              }`}
+              } ${isHeroEvent ? 'ring-1 ring-gold/30 bg-gold/[0.04]' : ''}`}
             >
               <div className={getEventClass(event.priority || 3)}>
                 <span className="mr-1.5 inline-block">{getEventIcon(event.eventType || '')}</span>

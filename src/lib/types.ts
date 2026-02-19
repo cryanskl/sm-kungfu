@@ -130,7 +130,8 @@ export type EventType =
   | 'hot_news'         // 热搜
   | 'speech'           // 宣言
   | 'champion'         // 盟主
-  | 'title_award';     // 称号颁发
+  | 'title_award'      // 称号颁发
+  | 'encounter';       // 奇遇
 
 export interface GameEvent {
   id: string;
@@ -217,6 +218,9 @@ export interface GameState {
 
   // 弹幕天意
   audienceInfluence: AudienceInfluence | null;
+
+  // 成就解锁（本局新解锁）
+  newAchievements: AchievementUnlock[];
 
   // 候补队列
   queueCount: number;
@@ -436,4 +440,43 @@ export interface AudienceInfluence {
   heroTargets: Record<string, Record<string, number>>;
   lastResetRound: number;
   activeEffects: string[];
+}
+
+// --- P2: 成就系统 ---
+export interface Achievement {
+  id: string;
+  name: string;        // 中文名
+  description: string; // 条件描述（隐藏成就显示 '???'）
+  icon: string;        // emoji
+  category: 'instant' | 'accumulated' | 'hidden';
+  points: number;      // 成就积分
+}
+
+export interface AchievementUnlock {
+  heroId: string;
+  heroName: string;
+  achievementId: string;
+  achievementName: string;
+  icon: string;
+  points: number;
+}
+
+// --- P4: 角色编辑器 ---
+export interface CharacterConfig {
+  preferredFaction: Faction | null;
+  personalityPreference: PersonalityType | null;
+  fightStyle: 'offensive' | 'defensive' | 'balanced' | null;
+  backstoryKeywords: string[];
+  customCatchphrase: string | null;
+}
+
+export interface QuizQuestion {
+  id: string;
+  question: string;
+  options: {
+    label: string;
+    effects: Partial<HeroAttributes>;
+    factionHint?: Faction;
+    personalityHint?: PersonalityType;
+  }[];
 }

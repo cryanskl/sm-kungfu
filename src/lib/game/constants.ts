@@ -115,6 +115,10 @@ export const ARTIFACTS: ArtifactDef[] = [
   { id: 'yupei', name: '龙纹玉佩', category: 'accessory', price: 300, multiplier: 3.5, description: '安定心神的玉佩', effect: { bluffBoost: 0.1 }, icon: '🐉' },
 ];
 
+// --- P1: 个人奇遇 ---
+export const ENCOUNTERS_PER_HERO = 2;
+export const VIEW_SWITCH_COOLDOWN = 3000;  // 视角切换防抖 3 秒
+
 // --- R6 决赛 ---
 export const FINALS_TOP_REPUTATION = 2;
 export const FINALS_TOP_HOT = 2;

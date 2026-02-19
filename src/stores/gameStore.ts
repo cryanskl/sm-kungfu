@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { GameState, GameEvent, DanmakuItem } from '@/lib/types';
+import { VIEW_SWITCH_COOLDOWN } from '@/lib/game/constants';
 
 interface UserState {
   userId: string | null;
@@ -35,11 +36,23 @@ interface WulinStore {
   stopPolling: () => void;
   pollNow: () => Promise<void>;
 
+  // SSE 实时推送
+  eventSource: EventSource | null;
+  startSSE: () => void;
+  stopSSE: () => void;
+
   // 前端播放状态
   displayPhase: 'idle' | 'director' | 'decision' | 'resolution' | 'update';
   setDisplayPhase: (phase: WulinStore['displayPhase']) => void;
   currentEvents: GameEvent[];
   setCurrentEvents: (events: GameEvent[]) => void;
+
+  // P1: 视角系统
+  viewingHeroId: string | null;
+  setViewingHero: (heroId: string | null) => void;
+  lastViewSwitch: number;
+  myEventsCompleted: boolean;
+  setMyEventsCompleted: (v: boolean) => void;
 
   // P2: 押注（支持多选）
   audienceBets: AudienceBet[];
@@ -119,11 +132,56 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
     } catch { /* ignore */ }
   },
 
+  // SSE 实时推送
+  eventSource: null,
+  startSSE: () => {
+    if (get().eventSource) return;
+    const es = new EventSource('/api/game/stream');
+    let firstMessage = true;
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        set({ gameState: data });
+        // SSE 连接成功，停止轮询
+        if (firstMessage) {
+          firstMessage = false;
+          get().stopPolling();
+        }
+      } catch { /* ignore parse errors */ }
+    };
+    es.onerror = () => {
+      es.close();
+      set({ eventSource: null });
+      // 降级到轮询
+      get().startPolling();
+    };
+    set({ eventSource: es });
+  },
+  stopSSE: () => {
+    const es = get().eventSource;
+    if (es) {
+      es.close();
+      set({ eventSource: null });
+    }
+  },
+
   // 前端播放
   displayPhase: 'idle',
   setDisplayPhase: (displayPhase) => set({ displayPhase }),
   currentEvents: [],
   setCurrentEvents: (currentEvents) => set({ currentEvents }),
+
+  // P1: 视角系统
+  viewingHeroId: null,
+  setViewingHero: (heroId) => {
+    const now = Date.now();
+    const last = get().lastViewSwitch;
+    if (now - last < VIEW_SWITCH_COOLDOWN) return; // 3 秒防抖
+    set({ viewingHeroId: heroId, lastViewSwitch: now });
+  },
+  lastViewSwitch: 0,
+  myEventsCompleted: false,
+  setMyEventsCompleted: (v) => set({ myEventsCompleted: v }),
 
   // P2: 押注
   audienceBets: [],

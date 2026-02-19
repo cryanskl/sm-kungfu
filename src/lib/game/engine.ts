@@ -7,7 +7,7 @@ import { roundPrompt, speechPrompt, deathPactPrompt, DIRECTOR_EVENTS } from './p
 import { NPC_TEMPLATES, pickRandomTrait, GAME_TRAITS } from './npc-data/templates';
 import * as C from './constants';
 import { narratives } from './narratives';
-import { rollEncounters } from './encounters';
+import { rollEncounters, rollPersonalEncounters } from './encounters';
 import { applyAudienceEffects } from './audience-influence';
 import type { AudienceInfluence } from '../types';
 
@@ -655,40 +655,56 @@ async function resolveRound(
     }
   }
 
-  // --- 随机奇遇 ---
+  // --- 个人支线奇遇（P1 新版：按门派/性格亲和度分配） ---
   {
-    const aliveNames = alive.filter(h => !h.isEliminated).map(h => h.heroName);
-    // 每回合 ~15-20 个奇遇，让 30s 内每秒都有新事件
-    const encounterCount = Math.min(Math.max(12, aliveNames.length + 10), 25);
-    const rolled = rollEncounters(roundNumber, aliveNames, encounterCount);
+    const heroInfos = alive.filter(h => !h.isEliminated).map(h => ({
+      heroName: h.heroName,
+      heroId: h.heroId,
+      faction: h.faction,
+      personalityType: h.personalityType,
+    }));
+    const personalEncounters = rollPersonalEncounters(roundNumber, heroInfos, C.ENCOUNTERS_PER_HERO);
 
-    for (const { heroName, encounter } of rolled) {
-      const heroId = getHeroIdByName(heroName);
-      if (!heroId) continue;
+    for (const { heroName, heroId, encounter, intersectWith } of personalEncounters) {
+      const resolvedHeroId = getHeroIdByName(heroName) || heroId;
+      if (!resolvedHeroId) continue;
+
+      // 交汇事件使用双人叙事
+      const narrativeText = encounter.tier === 'intersection' && intersectWith
+        ? encounter.narrative(heroName, intersectWith)
+        : encounter.narrative(heroName);
+
+      const targetHeroId = intersectWith ? getHeroIdByName(intersectWith) : undefined;
 
       events.push({
         eventType: 'encounter',
         priority: 4,
-        heroId,
-        narrative: encounter.narrative(heroName),
+        heroId: resolvedHeroId,
+        targetHeroId: targetHeroId || undefined,
+        narrative: narrativeText,
         reputationDelta: encounter.effects.reputation || 0,
         hotDelta: encounter.effects.hot || 0,
         hpDelta: encounter.effects.hp || 0,
-        data: { encounterId: encounter.id, category: encounter.category },
+        data: {
+          encounterId: encounter.id,
+          category: encounter.category,
+          tier: encounter.tier,
+          intersectWith: intersectWith || undefined,
+        },
       } as any);
 
-      if (encounter.effects.hp) addDelta(updates, heroId, 'hp', encounter.effects.hp);
-      if (encounter.effects.reputation) addDelta(updates, heroId, 'reputation', encounter.effects.reputation);
-      if (encounter.effects.hot) addDelta(updates, heroId, 'hot', encounter.effects.hot);
-      if (encounter.effects.morality) addDelta(updates, heroId, 'morality', encounter.effects.morality);
-      if (encounter.effects.credit) addDelta(updates, heroId, 'credit', encounter.effects.credit);
+      if (encounter.effects.hp) addDelta(updates, resolvedHeroId, 'hp', encounter.effects.hp);
+      if (encounter.effects.reputation) addDelta(updates, resolvedHeroId, 'reputation', encounter.effects.reputation);
+      if (encounter.effects.hot) addDelta(updates, resolvedHeroId, 'hot', encounter.effects.hot);
+      if (encounter.effects.morality) addDelta(updates, resolvedHeroId, 'morality', encounter.effects.morality);
+      if (encounter.effects.credit) addDelta(updates, resolvedHeroId, 'credit', encounter.effects.credit);
 
       if (encounter.martialArt) {
-        addMartialArt(updates, heroId, encounter.martialArt);
+        addMartialArt(updates, resolvedHeroId, encounter.martialArt);
         events.push({
           eventType: 'encounter',
           priority: 5,
-          heroId,
+          heroId: resolvedHeroId,
           narrative: `${heroName}习得新武学【${encounter.martialArt.name}】！（攻击+${encounter.martialArt.attackBonus}，防御+${encounter.martialArt.defenseBonus}）`,
           data: { martialArt: encounter.martialArt },
         } as any);
