@@ -117,7 +117,15 @@ export const ARTIFACTS: ArtifactDef[] = [
 
 // --- P1: 个人奇遇 ---
 export const ENCOUNTERS_PER_HERO = 2;
-export const VIEW_SWITCH_COOLDOWN = 3000;  // 视角切换防抖 3 秒
+export const VIEW_SWITCH_COOLDOWN = 500;  // 视角切换防抖 500ms
+
+// --- P5: 交互式回合选择 ---
+export const CHOOSING_DURATION = 15;       // 选择阶段秒数
+export const CHOOSING_TIMEOUT = 20;        // 超时强制 AI 兜底秒数
+export const CANDIDATES_PER_HERO = 6;      // 每轮候选奇遇数量
+export const CHOICES_PER_HERO = 2;         // 玩家必须选择的奇遇数量
+export const INFLUENCE_BUFF_AMOUNT = 10;   // 定向增益数值
+export const INFLUENCE_DEBUFF_AMOUNT = 10; // 定向减益数值
 
 // --- R6 决赛 ---
 export const FINALS_TOP_REPUTATION = 2;
@@ -129,9 +137,9 @@ export const BLUFF_CREDIT_FACTOR = 0.005;
 export const FINALS_CLASH_DAMAGE = 30;  // 绝招对绝招
 
 // --- 属性映射 ---
-export const BASE_ATTRIBUTE = 10;
+export const BASE_ATTRIBUTE = 15;
 export const MAX_PERSONALITY_BONUS = 20;
-export const TOTAL_ATTRIBUTE_BUDGET = 90;  // 总属性点约 80-100
+export const TOTAL_ATTRIBUTE_BUDGET = 110;  // 总属性点约 110-140
 
 // --- 门派属性加成 ---
 export const FACTION_BONUSES: Record<string, Partial<Record<string, number>>> = {

@@ -92,6 +92,8 @@ export type GameStatus =
   | 'waiting'     // 等待入场
   | 'countdown'   // 30 秒倒计时
   | 'intro'       // 开场点名
+  | 'choosing_1' | 'choosing_2' | 'choosing_3' | 'choosing_4' | 'choosing_5'
+  | 'resolving_1' | 'resolving_2' | 'resolving_3' | 'resolving_4' | 'resolving_5'
   | 'round_1' | 'round_2' | 'round_3' | 'round_4' | 'round_5' | 'round_6'
   | 'semifinals'  // 半决赛
   | 'artifact_selection' // 神兵助战（10秒观众投注）
@@ -221,6 +223,12 @@ export interface GameState {
 
   // 成就解锁（本局新解锁）
   newAchievements: AchievementUnlock[];
+
+  // 交互式回合选择
+  pendingChoices: EncounterChoice[];
+  choosingDeadline: string | null;
+  heroChoiceStatus: Record<string, 'pending' | 'chosen'>;
+  pendingInfluences: PendingInfluence[];
 
   // 候补队列
   queueCount: number;
@@ -479,4 +487,21 @@ export interface QuizQuestion {
     factionHint?: Faction;
     personalityHint?: PersonalityType;
   }[];
+}
+
+// --- P5: 交互式回合选择 ---
+export interface EncounterChoice {
+  id: string;
+  category: string;
+  name: string;       // 预渲染的叙事文本
+  effects: { hp?: number; reputation?: number; hot?: number; morality?: number; credit?: number };
+  martialArt?: { name: string; attackBonus: number; defenseBonus: number };
+  factionAffinity?: string[];
+  personalityAffinity?: string[];
+}
+
+export interface PendingInfluence {
+  sourceHeroId: string;
+  targetHeroId: string;
+  effectType: 'buff' | 'debuff';
 }

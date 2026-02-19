@@ -30,6 +30,11 @@ export function mapGameStateRow(data: any): GameState {
     artifactPool: data.artifact_pool || null,
     audienceInfluence: data.audience_influence || null,
     newAchievements: data.new_achievements || [],
+    // 交互式回合选择
+    pendingChoices: [],  // 按玩家填充，在 state API route 中注入
+    choosingDeadline: data.choosing_deadline || null,
+    heroChoiceStatus: data.hero_choice_status || {},
+    pendingInfluences: data.pending_influences || [],
     queueCount: data.queue_count || 0,
     // 服务器权威时间（由 state route 填充）
     serverTime: '',
