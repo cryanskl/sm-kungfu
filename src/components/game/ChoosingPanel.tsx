@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import type { GameState, EncounterChoice } from '@/lib/types';
+import { MidGameBetBar } from '@/components/game/MidGameBetBar';
 
 interface ChoosingPanelProps {
   gameState: GameState;
@@ -45,7 +46,7 @@ export function ChoosingPanel({ gameState, onSubmit, isSubmitted }: ChoosingPane
   // Effect display helpers
   const effectColor = (value: number | undefined) => {
     if (!value) return '';
-    return value > 0 ? 'text-emerald-400' : 'text-vermillion';
+    return value > 0 ? 'text-jade' : 'text-vermillion';
   };
   const effectSign = (value: number | undefined) => {
     if (!value) return '';
@@ -67,11 +68,16 @@ export function ChoosingPanel({ gameState, onSubmit, isSubmitted }: ChoosingPane
         <h3 className="font-display text-base font-bold text-gold tracking-wider">
           第 {gameState.currentRound} 轮 · 选择奇遇
         </h3>
-        {countdown !== null && (
-          <span className={`font-mono text-sm px-2 py-0.5 rounded ${countdown <= 5 ? 'text-vermillion animate-pulse' : 'text-[--text-dim]'}`}>
-            ⏱ {countdown}s
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {totalHeroes > 0 && (
+            <span className="text-[10px] text-[--text-dim] tabular-nums">{chosenCount}/{totalHeroes} 已提交</span>
+          )}
+          {countdown !== null && (
+            <span className={`font-mono text-sm px-2 py-0.5 rounded ${countdown <= 5 ? 'text-vermillion animate-pulse' : 'text-[--text-dim]'}`}>
+              ⏱ {countdown}s
+            </span>
+          )}
+        </div>
       </div>
 
       {isSubmitted ? (
@@ -101,13 +107,13 @@ export function ChoosingPanel({ gameState, onSubmit, isSubmitted }: ChoosingPane
                       : 'border-ink-light/20 bg-ink-dark/30 hover:border-ink-light/40'
                   }`}
                 >
-                  <div className="flex items-start justify-between mb-1.5">
-                    <span className={`text-sm font-bold truncate ${isSelected ? 'text-gold' : 'text-[--text-primary]'}`}>
+                  <div className="flex items-start justify-between mb-1">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${isSelected ? 'bg-gold/20 text-gold' : 'bg-ink-light/10 text-[--text-dim]'}`}>
                       {enc.category}
                     </span>
                     {isSelected && <span className="text-gold text-xs">✓</span>}
                   </div>
-                  <p className="text-xs text-[--text-secondary] mb-2 line-clamp-2">{enc.name}</p>
+                  <p className={`text-xs leading-relaxed mb-2 line-clamp-3 ${isSelected ? 'text-gold/90' : 'text-[--text-secondary]'}`}>{enc.name}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {Object.entries(enc.effects).filter(([, v]) => v !== 0 && v !== undefined).map(([key, value]) => (
                       <span key={key} className={`text-[10px] font-mono ${effectColor(value as number)}`}>
@@ -115,7 +121,7 @@ export function ChoosingPanel({ gameState, onSubmit, isSubmitted }: ChoosingPane
                       </span>
                     ))}
                     {enc.martialArt && (
-                      <span className="text-[10px] font-mono text-amber-400">
+                      <span className="text-[10px] font-mono text-gold">
                         武功:{enc.martialArt.name}
                       </span>
                     )}
@@ -135,6 +141,9 @@ export function ChoosingPanel({ gameState, onSubmit, isSubmitted }: ChoosingPane
           </button>
         </>
       )}
+
+      {/* Mid-game betting bar */}
+      <MidGameBetBar />
     </div>
   );
 }

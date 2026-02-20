@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { cookies } from 'next/headers';
 import { getHeroIdFromCookies, signCookie, verifyCookie } from '@/lib/auth';
-import { BET_AMOUNTS } from '@/lib/game/constants';
+import { BET_AMOUNTS, MID_GAME_BET_LIMITS, MID_GAME_BET_AMOUNTS } from '@/lib/game/constants';
 import { betRateLimiter } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
@@ -11,8 +11,9 @@ export async function POST(request: NextRequest) {
     if (!heroId || !amount || typeof amount !== 'number' || amount <= 0) {
       return NextResponse.json({ error: '参数有误' }, { status: 400 });
     }
-    if (!(BET_AMOUNTS as readonly number[]).includes(amount)) {
-      return NextResponse.json({ error: `金额必须为 ${BET_AMOUNTS.join('/')}` }, { status: 400 });
+    const ALL_BET_AMOUNTS: number[] = [...new Set([...BET_AMOUNTS, ...MID_GAME_BET_AMOUNTS])];
+    if (!ALL_BET_AMOUNTS.includes(amount)) {
+      return NextResponse.json({ error: `金额有误` }, { status: 400 });
     }
 
     // 检测登录状态
@@ -46,9 +47,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '当前无比赛' }, { status: 400 });
     }
 
-    // 仅 intro 阶段可押注
-    if (gs.status !== 'intro') {
+    // 允许 intro + choosing_N + semifinals 阶段押注，每阶段限额不同
+    const maxAmount = MID_GAME_BET_LIMITS[gs.status];
+    if (maxAmount === undefined) {
       return NextResponse.json({ error: '押注窗口已关闭' }, { status: 400 });
+    }
+    if (amount > maxAmount) {
+      return NextResponse.json(
+        { error: `当前阶段最高押注 ${maxAmount} 银两` },
+        { status: 400 }
+      );
     }
 
     // 检查是否已对此英雄押注（允许押多个不同英雄）
