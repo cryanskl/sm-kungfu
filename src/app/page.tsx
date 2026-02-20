@@ -766,7 +766,7 @@ export default function Home() {
         if (data.gameState) setGameState(data.gameState);
         else pollNow();
       } else {
-        console.error('Start failed:', await res.text());
+        console.log('Start skipped (likely already started):', res.status);
         pollNow();
       }
     } catch (e: any) { if (e?.name !== 'AbortError') console.error('Start error:', e); pollNow(); }

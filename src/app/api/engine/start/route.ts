@@ -343,6 +343,7 @@ export async function POST(request: NextRequest) {
     const { error: gsError } = await supabaseAdmin.from('game_state').upsert({
       id: 'current',
       game_id: currentGame.id,
+      game_number: gameNumber,
       status: 'intro',
       current_round: 0,
       phase: 'intro',
