@@ -90,10 +90,11 @@ export const HeroCard = memo(function HeroCard({ hero, compact = false, rank }: 
           <span className="flex-shrink-0 w-5" />
         )}
         {hero.avatarUrl ? (
-          <img src={hero.avatarUrl} alt="" className="w-6 h-6 rounded-full flex-shrink-0 object-cover ring-1 ring-ink-light/30" />
-        ) : (
-          <span className="text-lg flex-shrink-0 drop-shadow-sm">{fEmoji}</span>
-        )}
+          <img src={hero.avatarUrl} alt="" className="w-6 h-6 rounded-full flex-shrink-0 object-cover ring-1 ring-ink-light/30"
+            onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }}
+          />
+        ) : null}
+        <span className={`text-lg flex-shrink-0 drop-shadow-sm ${hero.avatarUrl ? 'hidden' : ''}`}>{fEmoji}</span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             {rank === 1 && <span className="text-xs">👑</span>}
@@ -129,10 +130,11 @@ export const HeroCard = memo(function HeroCard({ hero, compact = false, rank }: 
       {/* Header */}
       <div className="flex items-center gap-2.5 mb-3">
         {hero.avatarUrl ? (
-          <img src={hero.avatarUrl} alt="" className="w-10 h-10 rounded-full object-cover ring-2 ring-ink-light/30 flex-shrink-0" />
-        ) : (
-          <div className="text-3xl drop-shadow-sm">{fEmoji}</div>
-        )}
+          <img src={hero.avatarUrl} alt="" className="w-10 h-10 rounded-full object-cover ring-2 ring-ink-light/30 flex-shrink-0"
+            onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }}
+          />
+        ) : null}
+        <div className={`text-3xl drop-shadow-sm ${hero.avatarUrl ? 'hidden' : ''}`}>{fEmoji}</div>
         <div className="flex-1 min-w-0">
           <div className="font-display font-bold text-base tracking-wide flex items-center gap-1.5">
             {rank === 1 && <span className="text-sm">👑</span>}
