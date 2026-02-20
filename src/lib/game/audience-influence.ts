@@ -27,6 +27,9 @@ const INFLUENCE_EFFECTS: InfluenceEffect[] = [
   { id: 'comeback', keywords: /翻盘|逆袭/i,                 threshold: 8,  requiresHero: false, label: '逆袭',   icon: '🔄' },
   { id: 'betrayal', keywords: /背叛|反水|叛徒/i,            threshold: 6,  requiresHero: false, label: '背叛',   icon: '🗡️' },
   { id: 'double',   keywords: /双倍|加倍|翻倍/i,            threshold: 10, requiresHero: false, label: '加倍',   icon: '✨' },
+  { id: 'divine_weapon', keywords: /送剑|赐剑|铸剑/i,           threshold: 15, requiresHero: false, label: '天降神兵', icon: '🌟' },
+  { id: 'mysterious_npc', keywords: /高人|独孤|扫地僧|前辈/i,    threshold: 20, requiresHero: false, label: '高人指点', icon: '🧙' },
+  { id: 'mass_heal',     keywords: /回血|加血|奶一口|续命/i,     threshold: 12, requiresHero: false, label: '全场回血', icon: '💚' },
 ];
 
 // 前端安全的展示数据（无 RegExp，可在 'use client' 中 import）
@@ -107,50 +110,46 @@ export function applyAudienceEffects(
       }
 
       case 'cheer': {
-        // 目标英雄 +10 hot
+        // 目标英雄 +10 hot（得票最多的英雄）
         const heroTargets = influence.heroTargets?.['cheer'] || {};
         const topTarget = Object.entries(heroTargets).sort((a, b) => b[1] - a[1])[0];
         if (topTarget) {
-          const [heroName, votes] = topTarget;
-          if (votes >= effect.threshold) {
-            const heroId = getHeroIdByName(heroName);
-            if (heroId) {
-              addDelta(updates, heroId, 'hot', 10);
-              events.push({
-                eventType: 'hot_news',
-                priority: 5,
-                heroId,
-                narrative: `📣【弹幕天意】观众疯狂为${heroName}助威！热度 +10！`,
-                hotDelta: 10,
-                data: { audienceEffect: 'cheer', heroName, votes },
-              } as any);
-              consumed.push(`cheer:${heroName}`);
-            }
+          const [heroName] = topTarget;
+          const heroId = getHeroIdByName(heroName);
+          if (heroId) {
+            addDelta(updates, heroId, 'hot', 10);
+            events.push({
+              eventType: 'hot_news',
+              priority: 5,
+              heroId,
+              narrative: `📣【弹幕天意】观众疯狂为${heroName}助威！热度 +10！`,
+              hotDelta: 10,
+              data: { audienceEffect: 'cheer', heroName, votes: topTarget[1] },
+            } as any);
+            consumed.push(`cheer:${heroName}`);
           }
         }
         break;
       }
 
       case 'boo': {
-        // 目标英雄 -10 hot
+        // 目标英雄 -10 hot（得票最多的英雄）
         const heroTargets = influence.heroTargets?.['boo'] || {};
         const topTarget = Object.entries(heroTargets).sort((a, b) => b[1] - a[1])[0];
         if (topTarget) {
-          const [heroName, votes] = topTarget;
-          if (votes >= effect.threshold) {
-            const heroId = getHeroIdByName(heroName);
-            if (heroId) {
-              addDelta(updates, heroId, 'hot', -10);
-              events.push({
-                eventType: 'hot_news',
-                priority: 5,
-                heroId,
-                narrative: `👎【弹幕天意】观众嘘声一片！${heroName}热度 -10！`,
-                hotDelta: -10,
-                data: { audienceEffect: 'boo', heroName, votes },
-              } as any);
-              consumed.push(`boo:${heroName}`);
-            }
+          const [heroName] = topTarget;
+          const heroId = getHeroIdByName(heroName);
+          if (heroId) {
+            addDelta(updates, heroId, 'hot', -10);
+            events.push({
+              eventType: 'hot_news',
+              priority: 5,
+              heroId,
+              narrative: `👎【弹幕天意】观众嘘声一片！${heroName}热度 -10！`,
+              hotDelta: -10,
+              data: { audienceEffect: 'boo', heroName, votes: topTarget[1] },
+            } as any);
+            consumed.push(`boo:${heroName}`);
           }
         }
         break;
@@ -203,11 +202,14 @@ export function applyAudienceEffects(
       }
 
       case 'peace': {
-        // 标记本轮伤害 -50%（通过 data 传递给前端叙事，实际减半在 events 中体现）
+        // 全员回血 +15 HP，抵消本轮约一半战斗伤害
+        for (const h of alive) {
+          addDelta(updates, h.heroId, 'hp', 15);
+        }
         events.push({
           eventType: 'director_event',
           priority: 7,
-          narrative: `🕊️【弹幕天意】观众呼吁休战！本轮气氛祥和，戾气消散……（效果已生效）`,
+          narrative: `🕊️【弹幕天意】观众呼吁休战！祥和之气笼罩武林，全员恢复 15 HP！（${count}条弹幕触发）`,
           data: { audienceEffect: 'peace', count },
         } as any);
         consumed.push('peace');
@@ -289,6 +291,65 @@ export function applyAudienceEffects(
           data: { audienceEffect: 'double', count },
         } as any);
         consumed.push('double');
+        break;
+      }
+
+      case 'divine_weapon': {
+        const lucky = alive[Math.floor(Math.random() * alive.length)];
+        if (lucky) {
+          const weapons = [
+            { name: '天降·紫电剑', attackBonus: 8, defenseBonus: 2 },
+            { name: '天降·霜月刃', attackBonus: 6, defenseBonus: 4 },
+            { name: '天降·星陨锤', attackBonus: 10, defenseBonus: 0 },
+          ];
+          const weapon = weapons[Math.floor(Math.random() * weapons.length)];
+          if (!updates.get(lucky.heroId)) updates.set(lucky.heroId, {});
+          const u = updates.get(lucky.heroId)!;
+          if (!u._martialArts) u._martialArts = [];
+          u._martialArts.push(weapon);
+          events.push({
+            eventType: 'director_event',
+            priority: 8,
+            heroId: lucky.heroId,
+            narrative: `🌟【弹幕天意·天降神兵】观众铸剑之意汇聚！${lucky.heroName}获得【${weapon.name}】（攻+${weapon.attackBonus}，防+${weapon.defenseBonus}）！`,
+            data: { audienceEffect: 'divine_weapon', martialArt: weapon, count },
+          } as any);
+        }
+        consumed.push('divine_weapon');
+        break;
+      }
+
+      case 'mysterious_npc': {
+        const lucky = alive[Math.floor(Math.random() * alive.length)];
+        if (lucky) {
+          addDelta(updates, lucky.heroId, 'reputation', 15);
+          if (!updates.get(lucky.heroId)) updates.set(lucky.heroId, {});
+          const u = updates.get(lucky.heroId)!;
+          if (!u._martialArts) u._martialArts = [];
+          u._martialArts.push({ name: '高人秘传·吐纳心法', attackBonus: 3, defenseBonus: 3 });
+          events.push({
+            eventType: 'director_event',
+            priority: 8,
+            heroId: lucky.heroId,
+            narrative: `🧙【弹幕天意·高人指点】一位神秘高人现身！${lucky.heroName}获得秘传心法，声望 +15！`,
+            data: { audienceEffect: 'mysterious_npc', count },
+          } as any);
+        }
+        consumed.push('mysterious_npc');
+        break;
+      }
+
+      case 'mass_heal': {
+        for (const h of alive) {
+          addDelta(updates, h.heroId, 'hp', 20);
+        }
+        events.push({
+          eventType: 'director_event',
+          priority: 7,
+          narrative: `💚【弹幕天意·全场回血】观众的祈愿化为疗愈之力！全员恢复 20 HP！（${count}条弹幕触发）`,
+          data: { audienceEffect: 'mass_heal', count },
+        } as any);
+        consumed.push('mass_heal');
         break;
       }
     }

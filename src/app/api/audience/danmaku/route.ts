@@ -51,23 +51,6 @@ export async function POST(request: NextRequest) {
     const heroNames = (gs.heroes || []).map((h: any) => h.heroName);
     const influences = detectInfluence(trimmed, heroNames);
 
-    let currentInfluence = gs.audience_influence || {
-      counters: {}, heroTargets: {}, lastResetRound: 0, activeEffects: [],
-    };
-
-    if (influences.length > 0) {
-      currentInfluence = { ...currentInfluence, counters: { ...currentInfluence.counters }, heroTargets: { ...currentInfluence.heroTargets } };
-      for (const inf of influences) {
-        currentInfluence.counters[inf.category] = (currentInfluence.counters[inf.category] || 0) + 1;
-        if (inf.heroTarget) {
-          if (!currentInfluence.heroTargets[inf.category]) currentInfluence.heroTargets[inf.category] = {};
-          currentInfluence.heroTargets[inf.category] = { ...currentInfluence.heroTargets[inf.category] };
-          currentInfluence.heroTargets[inf.category][inf.heroTarget] =
-            (currentInfluence.heroTargets[inf.category][inf.heroTarget] || 0) + 1;
-        }
-      }
-    }
-
     // 写入 DB
     await supabaseAdmin.from('danmaku').insert({
       id,
@@ -78,18 +61,83 @@ export async function POST(request: NextRequest) {
       color,
     });
 
-    // 更新 game_state.danmaku + audience_influence（单次 update）
+    // 更新 game_state.danmaku（追加弹幕列表）
     const existing = Array.isArray(gs.danmaku) ? gs.danmaku : [];
     const newItem = { id, wuxiaText, color, createdAt: new Date().toISOString() };
     const updated = [...existing, newItem].slice(-30);
 
     await supabaseAdmin
       .from('game_state')
-      .update({
-        danmaku: updated,
-        ...(influences.length > 0 ? { audience_influence: currentInfluence } : {}),
-      })
+      .update({ danmaku: updated })
       .eq('id', 'current');
+
+    // 原子化更新天意计数器（避免并发 read-modify-write 丢失计数）
+    const HIGH_TRIGGER_THRESHOLDS: Record<string, number> = {
+      divine_weapon: 15, mysterious_npc: 20, mass_heal: 12,
+    };
+
+    if (influences.length > 0) {
+      const categories = influences.map(inf => inf.category);
+      const heroTargets: Record<string, Record<string, number>> = {};
+      for (const inf of influences) {
+        if (inf.heroTarget) {
+          if (!heroTargets[inf.category]) heroTargets[inf.category] = {};
+          heroTargets[inf.category][inf.heroTarget] = 1;
+        }
+      }
+      // 尝试使用原子 RPC；如果函数不存在则回退到非原子更新
+      const { error: rpcError } = await supabaseAdmin.rpc('increment_influence', {
+        p_categories: categories,
+        p_hero_targets: heroTargets,
+      });
+      if (rpcError) {
+        // RPC 不可用时回退到直接更新（有小概率丢失计数）
+        const currentInfluence = gs.audience_influence || { counters: {}, heroTargets: {} };
+        const counters = { ...currentInfluence.counters };
+        const targets = { ...currentInfluence.heroTargets };
+        for (const inf of influences) {
+          counters[inf.category] = (counters[inf.category] || 0) + 1;
+          if (inf.heroTarget) {
+            if (!targets[inf.category]) targets[inf.category] = {};
+            targets[inf.category] = { ...targets[inf.category] };
+            targets[inf.category][inf.heroTarget] = (targets[inf.category][inf.heroTarget] || 0) + 1;
+          }
+        }
+        await supabaseAdmin.from('game_state').update({
+          audience_influence: { ...currentInfluence, counters, heroTargets: targets },
+        }).eq('id', 'current');
+      }
+
+      // 高阈值效果触发检测：写入 lastTrigger 供前端全屏特效展示
+      for (const det of influences) {
+        const threshold = HIGH_TRIGGER_THRESHOLDS[det.category];
+        if (!threshold) continue;
+
+        const { data: latestGs } = await supabaseAdmin
+          .from('game_state')
+          .select('audience_influence')
+          .eq('id', 'current')
+          .single();
+        const currentCount = latestGs?.audience_influence?.counters?.[det.category] || 0;
+        if (currentCount >= threshold) {
+          // 查找触发者显示名（英雄名或 audience_id 前8位）
+          const myHero = (gs.heroes || []).find((h: any) => h.heroId === audienceId);
+          const displayName = myHero?.heroName || audienceId.slice(0, 8);
+
+          const updatedInfluence = { ...latestGs!.audience_influence };
+          updatedInfluence.lastTrigger = {
+            effectType: det.category,
+            triggeredBy: audienceId,
+            triggeredByName: displayName,
+            timestamp: Date.now(),
+          };
+          await supabaseAdmin
+            .from('game_state')
+            .update({ audience_influence: updatedInfluence })
+            .eq('id', 'current');
+        }
+      }
+    }
 
     // 设置 cookie
     const response = NextResponse.json({ ok: true, danmaku: newItem });

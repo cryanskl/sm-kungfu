@@ -11,11 +11,14 @@ const INFLUENCE_GUIDE: { keyword: string; icon: string; threshold: number; desc:
   { keyword: '嘘 + 角色名',  icon: '👎', threshold: 5,  desc: '对指定角色嘘声 -10 热度' },
   { keyword: '决斗',   icon: '⚔️', threshold: 8,  desc: '声望前二被迫决斗，各 -15 HP' },
   { keyword: '天降神兵', icon: '🗡️', threshold: 10, desc: '随机一人获得神兵武学' },
-  { keyword: '休战',   icon: '🕊️', threshold: 10, desc: '本轮所有伤害减半' },
+  { keyword: '休战',   icon: '🕊️', threshold: 10, desc: '祥和之气笼罩，全员恢复 15 HP' },
   { keyword: '大乱斗', icon: '💥', threshold: 8,  desc: '全员混战 -8 HP，+5 热度' },
   { keyword: '翻盘',   icon: '🔄', threshold: 8,  desc: '最低血量角色回血 +30 HP' },
   { keyword: '背叛',   icon: '🗡️', threshold: 6,  desc: '随机拆散一对联盟' },
   { keyword: '翻倍',   icon: '✨', threshold: 10, desc: '全场声望和热度各 +10' },
+  { keyword: '送剑/铸剑', icon: '🌟', threshold: 15, desc: '随机一人获得高级神兵（全屏特效）' },
+  { keyword: '高人/扫地僧', icon: '🧙', threshold: 20, desc: '神秘高人指点，赐心法+声望（全屏特效）' },
+  { keyword: '回血/奶一口', icon: '💚', threshold: 12, desc: '全员恢复 20 HP（全屏特效）' },
 ];
 
 // 提示词：点击直接填入输入框。带 ✦ 的是天意关键词（多人发可触发效果）
@@ -26,6 +29,9 @@ const HINT_CHIPS = [
   { text: '大乱斗', icon: '💥', influence: true },
   { text: '翻倍',   icon: '✨', influence: true },
   { text: '休战',   icon: '🕊️', influence: true },
+  { text: '铸剑',   icon: '🌟', influence: true },
+  { text: '回血',   icon: '💚', influence: true },
+  { text: '扫地僧', icon: '🧙', influence: true },
   { text: '666',    icon: '',   influence: false },
   { text: '冲！',   icon: '',   influence: false },
   { text: '加油',   icon: '📣', influence: false },
@@ -79,26 +85,53 @@ export function DanmakuInput() {
     setSending(false);
   }, [text, sending, addLocalDanmaku]);
 
-  const hasActiveInfluence = influence?.counters && Object.keys(influence.counters).some(k => influence.counters[k] > 0);
+  const hasActiveInfluence = influence?.counters && Object.keys(influence.counters).some(k => (influence.counters as Record<string, number>)[k] > 0);
 
   return (
     <div className="flex flex-col items-center gap-2 max-w-lg mx-auto">
-      {/* 弹幕天意进度条 */}
-      {hasActiveInfluence && (
-        <div className="flex flex-wrap gap-1.5 justify-center">
-          {INFLUENCE_DISPLAY.map(eff => {
-            const count = influence!.counters[eff.id] || 0;
-            if (count === 0) return null;
-            const full = count >= eff.threshold;
+      {/* 弹幕天意进度条（始终显示已有进度+最热效果） */}
+      <div className="flex flex-wrap gap-1.5 justify-center">
+        {INFLUENCE_DISPLAY
+          .map(eff => ({ ...eff, count: influence?.counters?.[eff.id] || 0 }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, hasActiveInfluence ? INFLUENCE_DISPLAY.length : 4)
+          .map(eff => {
+            const full = eff.count >= eff.threshold;
+            const pct = Math.min(100, (eff.count / eff.threshold) * 100);
+            const isHighThreshold = eff.id === 'divine_weapon' || eff.id === 'mysterious_npc' || eff.id === 'mass_heal';
+            const nearThreshold = isHighThreshold && eff.count >= eff.threshold * 0.7;
+
+            // 高阈值效果：用进度条样式替代纯数字pill
+            if (isHighThreshold && eff.count > 0) {
+              return (
+                <span key={eff.id} className={`relative text-[10px] px-2 py-0.5 rounded-full border overflow-hidden
+                  ${full ? 'border-gold/60 bg-gold/15 text-gold animate-pulse'
+                    : nearThreshold ? 'border-gold/50 text-gold shadow-gold-glow'
+                    : 'border-ink-light/30 text-[--text-secondary]'}`}>
+                  {!full && (
+                    <span
+                      className={`absolute inset-y-0 left-0 rounded-full transition-all duration-500 ${nearThreshold ? 'bg-gold/20' : 'bg-gold/8'}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  )}
+                  <span className="relative">{eff.icon} {eff.label} {eff.count}/{eff.threshold}</span>
+                </span>
+              );
+            }
+
             return (
-              <span key={eff.id} className={`text-[10px] px-2 py-0.5 rounded-full border
-                ${full ? 'border-gold/60 bg-gold/15 text-gold animate-pulse' : 'border-ink-light/20 text-[--text-dim]'}`}>
-                {eff.icon} {eff.label} {count}/{eff.threshold}
+              <span key={eff.id} className={`relative text-[10px] px-2 py-0.5 rounded-full border overflow-hidden
+                ${full ? 'border-gold/60 bg-gold/15 text-gold animate-pulse'
+                  : eff.count > 0 ? 'border-ink-light/30 text-[--text-secondary]'
+                  : 'border-ink-light/10 text-[--text-dim]/50'}`}>
+                {eff.count > 0 && !full && (
+                  <span className="absolute inset-0 bg-gold/8 rounded-full" style={{ width: `${pct}%` }} />
+                )}
+                <span className="relative">{eff.icon} {eff.label} {eff.count}/{eff.threshold}</span>
               </span>
             );
           })}
-        </div>
-      )}
+      </div>
 
       <div className="flex items-center gap-2 w-full relative">
         <input
@@ -140,7 +173,7 @@ export function DanmakuInput() {
           <div
             ref={guideRef}
             className="absolute bottom-full right-0 mb-2 w-72 sm:w-80
-              bg-[#1a1510] border border-gold/25 rounded-lg shadow-[0_0_20px_rgba(0,0,0,0.6)]
+              bg-ink-deep border border-gold/25 rounded-lg shadow-[0_0_20px_rgba(0,0,0,0.6)]
               p-3 z-50 animate-[fadeSlideUp_0.2s_ease-out]"
           >
             <div className="flex items-center justify-between mb-2">

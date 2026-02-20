@@ -11,11 +11,28 @@ import { IntroPhase } from '@/components/game/phases/IntroPhase';
 import { ActiveGamePhase } from '@/components/game/phases/ActiveGamePhase';
 import { EndedPhase } from '@/components/game/phases/EndedPhase';
 import { ArtifactSelectionPanel } from '@/components/game/ArtifactSelectionPanel';
+import FullScreenEffect from '@/components/game/FullScreenEffect';
 import { soundManager } from '@/lib/sound';
 import { bgmManager } from '@/lib/bgm';
-import { GOSSIP_LINES, LOADING_LINES } from '@/lib/game/constants';
+import { GOSSIP_LINES, LOADING_LINES, INTRO_DURATION } from '@/lib/game/constants';
 import { useEventRevealer } from '@/hooks/useEventRevealer';
 import { generateCommentary, generateWelcomeDanmaku, resetEliminationCount, generateCelebrationDanmaku } from '@/lib/game/commentary';
+
+function statusLabel(status: string | undefined): string {
+  if (!status) return '等待中';
+  if (status === 'waiting') return '等待入场';
+  if (status === 'countdown') return '即将开始';
+  if (status === 'intro') return '江湖开篇';
+  if (status.startsWith('choosing_')) return `选择奇遇`;
+  if (status.startsWith('resolving_')) return `回合结算中`;
+  if (status.startsWith('round_')) return `比武进行中`;
+  if (status === 'semifinals' || status === 'processing_finals') return '半决赛';
+  if (status === 'artifact_selection') return '神兵助战';
+  if (status === 'final' || status === 'processing_final') return '总决赛';
+  if (status === 'ending') return '落幕';
+  if (status === 'ended') return '已结束';
+  return status;
+}
 
 export default function Home() {
   // 只订阅渲染需要的状态值（避免 danmaku/bet 等高频变更导致整组件重渲染）
@@ -23,7 +40,7 @@ export default function Home() {
     useShallow(s => ({ user: s.user, gameState: s.gameState, currentEvents: s.currentEvents }))
   );
   // 函数引用在 Zustand 中永远稳定，直接从 getState 取，不触发订阅
-  const { setUser, setGameState, setCurrentEvents, startPolling, startSSE, stopSSE, pollNow, clearAudienceBets, clearLocalDanmaku, clearAudienceArtifact, addCommentaryDanmaku, addLocalDanmaku, setMyEventsCompleted, submitChoices } = useWulinStore.getState();
+  const { setUser, setGameState, setCurrentEvents, startPolling, pollNow, clearAudienceBets, clearLocalDanmaku, clearAudienceArtifact, addCommentaryDanmaku, addLocalDanmaku, setMyEventsCompleted, submitChoices } = useWulinStore.getState();
 
   // UI state
   const [isInitLoading, setIsInitLoading] = useState(true);
@@ -97,6 +114,7 @@ export default function Home() {
   }, [isRevealing, gameState?.status, gameState?.gameId]);
 
   // 兜底：轮询发现状态停留超时且未在处理中，强制触发
+  // 使用 ref 读取最新 phaseElapsedMs，避免 setInterval 闭包捕获过期值
   const stuckCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
     if (stuckCheckRef.current) { clearInterval(stuckCheckRef.current); stuckCheckRef.current = null; }
@@ -104,23 +122,25 @@ export default function Home() {
     const gameId = gameState?.gameId;
     if (!status || !gameId) return;
 
-    // round_2~5: >40s stuck → retry triggerRound
+    const getElapsed = () => useWulinStore.getState().gameState?.phaseElapsedMs;
+
+    // round_2~5: >40s stuck → retry triggerChooseStart（进入选择阶段，而非直接解算）
     if (status.startsWith('round_')) {
       const roundNum = parseInt(status.split('_')[1]);
       if (!isNaN(roundNum) && roundNum >= 2 && roundNum <= 5) {
         stuckCheckRef.current = setInterval(() => {
-          const elapsed = gameState?.phaseElapsedMs;
+          const elapsed = getElapsed();
           if (elapsed == null) return;
           // 标准兜底：40s + 非处理中
           if (elapsed > 40000 && !isProcessingRef.current && !isRevealing) {
-            console.warn(`[StuckDetector] round_${roundNum} stuck for ${elapsed}ms, force triggering`);
-            triggerRound(gameId, roundNum);
+            console.warn(`[StuckDetector] round_${roundNum} stuck for ${elapsed}ms, triggering choose start`);
+            triggerChooseStart(gameId, roundNum);
           }
           // 紧急兜底：60s 无论是否 isProcessing，强制重置并重试
           if (elapsed > 60000 && isProcessingRef.current) {
             console.warn(`[StuckDetector] round_${roundNum} EMERGENCY: processing stuck for ${elapsed}ms, force-resetting`);
             setIsProcessing(false);
-            triggerRound(gameId, roundNum);
+            triggerChooseStart(gameId, roundNum);
           }
         }, 5000);
       }
@@ -129,7 +149,7 @@ export default function Home() {
     // intro: >40s stuck → retry triggerChooseStart(1)
     if (status === 'intro') {
       stuckCheckRef.current = setInterval(() => {
-        const elapsed = gameState?.phaseElapsedMs;
+        const elapsed = getElapsed();
         if (elapsed != null && elapsed > 40000 && !isProcessingRef.current) {
           console.warn(`[StuckDetector] intro stuck for ${elapsed}ms, force triggering choosing 1`);
           triggerChooseStart(gameId, 1);
@@ -142,7 +162,7 @@ export default function Home() {
       const roundNum = parseInt(status.split('_')[1]);
       if (!isNaN(roundNum)) {
         stuckCheckRef.current = setInterval(() => {
-          const elapsed = gameState?.phaseElapsedMs;
+          const elapsed = getElapsed();
           if (elapsed != null && elapsed > 30000 && !isProcessingRef.current) {
             console.warn(`[StuckDetector] resolving_${roundNum} stuck for ${elapsed}ms, force triggering`);
             triggerRound(gameId, roundNum);
@@ -154,7 +174,7 @@ export default function Home() {
     // semifinals: >40s stuck → retry triggerFinals
     if (status === 'semifinals') {
       stuckCheckRef.current = setInterval(() => {
-        const elapsed = gameState?.phaseElapsedMs;
+        const elapsed = getElapsed();
         if (elapsed != null && elapsed > 40000 && !isProcessingRef.current) {
           console.warn(`[StuckDetector] semifinals stuck for ${elapsed}ms, force triggering finals`);
           triggerFinals(gameId);
@@ -200,13 +220,12 @@ export default function Home() {
         // 先用轮询拉取首屏数据，再启动 SSE
         startPolling(),
       ]);
-      // SSE 就绪后停止轮询，SSE onerror 会自动 fallback 回轮询
-      startSSE();
+      // SSE 暂时禁用：endpoint 在 Vercel serverless 上不可靠且有资源泄露
+      // 轮询已足够满足需求（智能间隔：战斗 3s / 等待 8s）
       setIsInitLoading(false);
     };
     init();
     return () => {
-      stopSSE();
       if (timerRef.current) clearTimeout(timerRef.current);
       if (countdownRef.current) clearInterval(countdownRef.current);
       if (roundTimerRef.current) clearInterval(roundTimerRef.current);
@@ -299,7 +318,7 @@ export default function Home() {
       lastTriggeredRef.current = key;
       clearAllTimers();
       const elapsed = getPhaseElapsedSec();
-      const introRemaining = Math.max(0, 15 - elapsed);
+      const introRemaining = Math.max(0, INTRO_DURATION - elapsed);
       setIntroTimer(introRemaining);
       if (introTimerRef.current) clearInterval(introTimerRef.current);
       if (introRemaining > 0) {
@@ -317,8 +336,8 @@ export default function Home() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ gameId, roundNumber: 1 }),
       }).catch(() => {});
-      // 10s 触发，减去已过时间 — 进入选择阶段而非直接解算
-      const triggerDelay = Math.max(0, 10000 - elapsed * 1000);
+      // intro 结束后触发选择阶段
+      const triggerDelay = Math.max(0, INTRO_DURATION * 1000 - elapsed * 1000);
       timerRef.current = setTimeout(() => triggerChooseStart(gameId, 1), triggerDelay);
     }
 
@@ -420,9 +439,9 @@ export default function Home() {
     if (!status || elapsed == null) return;
     const elapsedSec = Math.floor(elapsed / 1000);
 
-    // intro: 15s 总时长
+    // intro: INTRO_DURATION 总时长
     if (status === 'intro' && introTimer !== null) {
-      setIntroTimer(Math.max(0, 15 - elapsedSec));
+      setIntroTimer(Math.max(0, INTRO_DURATION - elapsedSec));
     }
     // artifact_selection: 10s 总时长
     if (status === 'artifact_selection' && artifactTimer !== null) {
@@ -625,7 +644,9 @@ export default function Home() {
           if (roundTimerRef.current) clearInterval(roundTimerRef.current);
           if (!roundTriggeredRef.current) {
             roundTriggeredRef.current = true;
-            triggerRound(gameId, nextRound);
+            // 必须调用 triggerChooseStart（进入选择阶段），而非 triggerRound（解算）。
+            // 此时 DB status 仍为 round_N，processRound 期望 choosing_N 会锁失败。
+            triggerChooseStart(gameId, nextRound);
           }
           return null;
         }
@@ -748,7 +769,11 @@ export default function Home() {
 
   const handleSubmitChoices = useCallback(async (encounterIds: string[]) => {
     if (!gameState?.gameId) return;
-    await submitChoices(gameState.gameId, encounterIds);
+    const ok = await submitChoices(gameState.gameId, encounterIds);
+    if (!ok) {
+      setJoinToast('提交失败，请重试');
+      setTimeout(() => setJoinToast(null), 3000);
+    }
   }, [gameState?.gameId, submitChoices]);
 
   const triggerFinals = useCallback(async (gameId: string) => {
@@ -811,6 +836,8 @@ export default function Home() {
   }, [startReveal, setGameState, pollNow, setMyEventsCompleted]);
 
   const triggerEnd = useCallback(async (gameId: string) => {
+    if (isProcessingRef.current) return;
+    setIsProcessing(true);
     try {
       const res = await fetch('/api/engine/end', {
         method: 'POST',
@@ -823,6 +850,7 @@ export default function Home() {
         else pollNow();
       } else { pollNow(); }
     } catch (e) { console.error('End error:', e); pollNow(); }
+    setIsProcessing(false);
   }, [setGameState, pollNow]);
 
   const handleJoinImmediate = useCallback(() => {
@@ -846,10 +874,19 @@ export default function Home() {
   // 初始加载骨架屏 — 数据到达前立即展示，避免白屏
   if (isInitLoading) {
     return (
-      <div className="h-dvh flex flex-col items-center justify-center bg-[--bg-primary)]">
-        <div className="text-center space-y-4 animate-pulse">
-          <div className="text-4xl">⚔️</div>
-          <p className="text-[--text-secondary] text-sm">江湖载入中…</p>
+      <div className="h-dvh flex flex-col items-center justify-center bg-ink-deepest">
+        <div className="text-center space-y-6">
+          <div
+            className="font-display text-8xl text-gold animate-breathe select-none"
+            style={{ textShadow: '0 0 40px var(--gold-glow), 0 0 80px rgba(201,168,76,0.1)' }}
+          >
+            武
+          </div>
+          <div className="loading-jianghu">
+            <span className="loading-jianghu-icon">⏳</span>
+            <span>江湖载入中</span>
+            <span className="loading-dots" />
+          </div>
         </div>
       </div>
     );
@@ -874,6 +911,7 @@ export default function Home() {
       />
 
       <DanmakuOverlay />
+      <FullScreenEffect />
 
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 py-6 overflow-y-auto">
         {(status === 'waiting' || status === 'countdown') && (
@@ -961,7 +999,7 @@ export default function Home() {
         )}
         <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between text-xs text-[--text-dim]">
           <span className="tabular-nums">
-            {status} · R{gameState?.currentRound || 0}
+            {statusLabel(status)} · 第{gameState?.currentRound || 0}回合
             {gameState?.heroes?.length ? ` · ${gameState.heroes.filter(h => !h.isEliminated).length}人存活` : ''}
           </span>
           <span>
