@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import type { GameState, EncounterChoice } from '@/lib/types';
 import { MidGameBetBar } from '@/components/game/MidGameBetBar';
+import PredictionBar from '@/components/game/PredictionBar';
 
 interface ChoosingPanelProps {
   gameState: GameState;
@@ -63,6 +64,9 @@ export function ChoosingPanel({ gameState, onSubmit, isSubmitted }: ChoosingPane
 
   return (
     <div className="space-y-4">
+      {/* Prediction bar */}
+      <PredictionBar />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <h3 className="font-display text-base font-bold text-gold tracking-wider">

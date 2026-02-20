@@ -82,6 +82,47 @@ const MIGRATION_SQL = [
   `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS hero_choice_status JSONB DEFAULT '{}'`,
   `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS pending_influences JSONB DEFAULT '[]'`,
   `ALTER TABLE heroes ADD COLUMN IF NOT EXISTS influence_used BOOLEAN DEFAULT false`,
+  // 武林周刊战报数据 + 崩溃恢复时间戳
+  `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS battle_stats JSONB DEFAULT '{}'`,
+  `ALTER TABLE games ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
+  // increment_influence RPC 函数（原子化弹幕天意计数器）
+  `CREATE OR REPLACE FUNCTION increment_influence(
+  p_categories TEXT[],
+  p_hero_targets JSONB DEFAULT '{}'
+)
+RETURNS JSONB AS $$
+DECLARE
+  v_inf JSONB;
+  v_cat TEXT;
+  v_hero TEXT;
+  v_cnt INT;
+BEGIN
+  SELECT COALESCE(audience_influence, '{}'::jsonb) INTO v_inf
+  FROM game_state WHERE id = 'current' FOR UPDATE;
+
+  IF v_inf IS NULL THEN v_inf := '{}'::jsonb; END IF;
+  IF v_inf->'counters' IS NULL THEN v_inf := jsonb_set(v_inf, '{counters}', '{}'::jsonb); END IF;
+  IF v_inf->'heroTargets' IS NULL THEN v_inf := jsonb_set(v_inf, '{heroTargets}', '{}'::jsonb); END IF;
+
+  FOREACH v_cat IN ARRAY p_categories LOOP
+    v_cnt := COALESCE((v_inf->'counters'->>v_cat)::int, 0) + 1;
+    v_inf := jsonb_set(v_inf, ARRAY['counters', v_cat], to_jsonb(v_cnt));
+  END LOOP;
+
+  FOR v_cat IN SELECT key FROM jsonb_each(p_hero_targets) LOOP
+    IF v_inf->'heroTargets'->v_cat IS NULL THEN
+      v_inf := jsonb_set(v_inf, ARRAY['heroTargets', v_cat], '{}'::jsonb);
+    END IF;
+    FOR v_hero IN SELECT key FROM jsonb_each(p_hero_targets->v_cat) LOOP
+      v_cnt := COALESCE((v_inf->'heroTargets'->v_cat->>v_hero)::int, 0) + 1;
+      v_inf := jsonb_set(v_inf, ARRAY['heroTargets', v_cat, v_hero], to_jsonb(v_cnt));
+    END LOOP;
+  END LOOP;
+
+  UPDATE game_state SET audience_influence = v_inf WHERE id = 'current';
+  RETURN v_inf;
+END;
+$$ LANGUAGE plpgsql`,
   // deduct_balance RPC 函数（押注/神兵扣款）
   `CREATE OR REPLACE FUNCTION deduct_balance(p_hero_id UUID, p_amount INT)
 RETURNS INT AS $$
@@ -97,6 +138,9 @@ BEGIN
   RETURN v_new_balance;
 END;
 $$ LANGUAGE plpgsql`,
+  // 功能2: 观众预测
+  `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS predictions JSONB DEFAULT NULL`,
+  `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS prediction_results JSONB DEFAULT NULL`,
 ];
 
 async function tryExecSQL(sql) {
@@ -187,6 +231,23 @@ async function checkP5Column() {
   }
 }
 
+async function checkInfluenceFn() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/increment_influence`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SERVICE_KEY,
+        'Authorization': `Bearer ${SERVICE_KEY}`,
+      },
+      body: JSON.stringify({ p_categories: [], p_hero_targets: {} }),
+    });
+    return res.status !== 404;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   console.log('🏗️  AI 武林大会 · 数据库迁移');
   console.log('=' .repeat(50));
@@ -197,13 +258,15 @@ async function main() {
   const rlsEnabled = await checkRLS();
   const fnExists = await checkFunction();
   const p5Exists = await checkP5Column();
+  const infFnExists = await checkInfluenceFn();
 
   console.log(`  audience_influence 列: ${colExists ? '✅ 已存在' : '❌ 未创建'}`);
   console.log(`  RLS 保护:             ${rlsEnabled ? '✅ 已启用' : '❌ 未启用'}`);
   console.log(`  deduct_balance 函数:  ${fnExists ? '✅ 已存在' : '❌ 未创建'}`);
   console.log(`  P5 交互式选择列:      ${p5Exists ? '✅ 已存在' : '❌ 未创建'}`);
+  console.log(`  increment_influence:  ${infFnExists ? '✅ 已存在' : '❌ 未创建'}`);
 
-  if (colExists && rlsEnabled && fnExists && p5Exists) {
+  if (colExists && rlsEnabled && fnExists && p5Exists && infFnExists) {
     console.log('\n✅ 迁移已完成，无需操作！');
     return;
   }
