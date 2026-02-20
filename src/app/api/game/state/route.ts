@@ -45,6 +45,34 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  // Desync auto-recovery: if game_state is stale, check games table for authoritative status
+  const STALE_THRESHOLD_MS = 90_000;
+  const LONG_LIVED = new Set(['waiting', 'ended', 'ending']);
+  if (data.status && data.game_id && data.phase_started_at && !LONG_LIVED.has(data.status)) {
+    const elapsed = Date.now() - new Date(data.phase_started_at).getTime();
+    if (elapsed > STALE_THRESHOLD_MS) {
+      const { data: game } = await supabaseAdmin
+        .from('games')
+        .select('status, current_round')
+        .eq('id', data.game_id)
+        .single();
+      if (game && game.status !== data.status) {
+        console.log(`[StateSync] desync: game_state="${data.status}" vs games="${game.status}", syncing`);
+        const now = new Date().toISOString();
+        await supabaseAdmin.from('game_state').update({
+          status: game.status,
+          current_round: game.current_round,
+          phase_started_at: now,
+          updated_at: now,
+        }).eq('id', 'current');
+        data.status = game.status;
+        data.current_round = game.current_round;
+        data.phase_started_at = now;
+        data.updated_at = now;
+      }
+    }
+  }
+
   // ETag: 基于 updated_at 时间戳，避免无变化时传输全量数据
   const updatedAt = data.updated_at || '';
   const etag = `"${updatedAt}"`;
