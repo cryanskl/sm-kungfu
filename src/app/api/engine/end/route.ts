@@ -4,9 +4,12 @@ import { TITLES, ARTIFACTS, PREDICTION_REWARDS } from '@/lib/game/constants';
 import { mapGameStateRow } from '@/lib/game/state-mapper';
 import { computeBattleStats } from '@/lib/game/battle-stats';
 import { evaluateAndAwardAchievements } from '@/lib/game/achievements';
+import { requireEngineSecret } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
+    const authErr = requireEngineSecret(request);
+    if (authErr) return authErr;
 
     const { gameId } = await request.json();
     if (!gameId) return NextResponse.json({ error: 'Missing gameId' }, { status: 400 });
@@ -629,6 +632,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (err: any) {
     console.error('End game error:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -161,36 +161,93 @@ export function generateFallbackBio(heroName: string, faction: string): string {
 }
 
 // --- 导演事件描述 ---
-export const DIRECTOR_EVENTS: Record<number, {
+type DirectorEvent = {
   title: string;
   description: string;
   flavor: string;
   availableActions: string[];
-}> = {
-  1: {
-    title: '残卷落地',
-    description: '《九阴真经》残卷从天而降！只够3人拿！选explore去抢，选fight硬夺！',
-    flavor: '一阵狂风吹过擂台，三卷泛黄的经书从天际飘落——正是失传百年的《九阴真经》残卷！各路英雄瞬间红了眼，一场腥风血雨在所难免。',
-    availableActions: ['fight', 'explore', 'train', 'ally'],
-  },
-  2: {
-    title: '方丈收徒',
-    description: '少林方丈今日只收一名关门弟子！选train发表拜师宣言，其他人自由行动。',
-    flavor: '少林方丈空闻大师亲临擂台，目光如炬扫过众人。他宣布：今日只收一名关门弟子，传授毕生绝学。各路英雄纷纷摩拳擦掌，一时间拜师宣言此起彼伏。',
-    availableActions: ['train', 'fight', 'explore', 'ally'],
-  },
-  3: {
-    title: '盟约公开',
-    description: '导演组公开所有联盟关系！背叛按钮已开放——偷走盟友30%资源！',
-    flavor: '一封密信被人截获，所有同盟关系大白于天下！昔日的盟友此刻面面相觑——是继续携手，还是趁机反戈一击？背叛的暗影笼罩着每一个人。',
-    availableActions: ['fight', 'ally', 'betray', 'train'],
-  },
-  4: {
-    title: '通缉令',
-    description: '声望第一被挂上江湖通缉令！击败他获50声望！但通缉犯有侠义光环加持！',
-    flavor: '城门口贴出了一张鲜红的通缉令——声望最高者赫然在列！赏金丰厚，引得众人蠢蠢欲动。但通缉犯岂是易与之辈？侠义光环护身，实力更胜一筹。',
-    availableActions: ['fight', 'train', 'ally', 'rest'],
-  },
+};
+
+// 每回合变体池：R1-R4 各有 2-3 个变体，R5/R6 机制绑定不变
+const DIRECTOR_EVENT_VARIANTS: Record<number, DirectorEvent[]> = {
+  1: [
+    {
+      title: '残卷落地',
+      description: '《九阴真经》残卷从天而降！只够3人拿！选explore去抢，选fight硬夺！',
+      flavor: '一阵狂风吹过擂台，三卷泛黄的经书从天际飘落——正是失传百年的《九阴真经》残卷！各路英雄瞬间红了眼，一场腥风血雨在所难免。',
+      availableActions: ['fight', 'explore', 'train', 'ally'],
+    },
+    {
+      title: '藏宝图现世',
+      description: '一张古老藏宝图被风吹到擂台上！选explore寻宝，选fight抢夺，选ally合伙！',
+      flavor: '不知从何处飘来一张残破羊皮地图，上面标注着某位前辈高人的毕生收藏。宝藏只有一份，但觊觎者却有十二位——夺宝大战即刻打响！',
+      availableActions: ['fight', 'explore', 'ally', 'train'],
+    },
+    {
+      title: '毒泉涌现',
+      description: '擂台下涌出五色毒泉！选train运功抵御，选explore采毒为己用，选fight趁乱偷袭！',
+      flavor: '大地震颤，擂台四角涌出五色斑斓的毒泉，毒雾弥漫。有人捂鼻后退，有人却眼放精光——这五毒之精若能炼化，便是至强的暗器毒药。乱局之下，各怀心思。',
+      availableActions: ['train', 'explore', 'fight', 'ally'],
+    },
+  ],
+  2: [
+    {
+      title: '方丈收徒',
+      description: '少林方丈今日只收一名关门弟子！选train发表拜师宣言，其他人自由行动。',
+      flavor: '少林方丈空闻大师亲临擂台，目光如炬扫过众人。他宣布：今日只收一名关门弟子，传授毕生绝学。各路英雄纷纷摩拳擦掌，一时间拜师宣言此起彼伏。',
+      availableActions: ['train', 'fight', 'explore', 'ally'],
+    },
+    {
+      title: '论武大会',
+      description: '武当张真人设擂论武！选train切磋武学，选fight实战比拼，选ally以武会友！',
+      flavor: '一位白发老道飘然而至，正是武当张三丰真人。他在擂台中央盘膝而坐："今日不论门派，只论武道。"各路英雄纷纷施展毕生绝学，一场武学盛宴拉开帷幕。',
+      availableActions: ['train', 'fight', 'ally', 'explore'],
+    },
+  ],
+  3: [
+    {
+      title: '盟约公开',
+      description: '导演组公开所有联盟关系！背叛按钮已开放——偷走盟友30%资源！',
+      flavor: '一封密信被人截获，所有同盟关系大白于天下！昔日的盟友此刻面面相觑——是继续携手，还是趁机反戈一击？背叛的暗影笼罩着每一个人。',
+      availableActions: ['fight', 'ally', 'betray', 'train'],
+    },
+    {
+      title: '无间风云',
+      description: '有人在各派安插了内应！背叛可获双倍声望，但失败代价也更大！',
+      flavor: '一名蒙面人在暗处散布密报：各门各派中都潜伏着对方的卧底！一时间人人自危，信任崩塌。在这尔虞我诈的乱局中，是坚守道义还是趁火打劫？',
+      availableActions: ['betray', 'fight', 'ally', 'train'],
+    },
+    {
+      title: '英雄宴',
+      description: '主办方设宴犒赏群雄！宴席上暗流涌动——是把酒言欢还是杯酒藏刀？',
+      flavor: '擂台变为宴席，美酒佳肴堆满长桌。主办方笑道："今日只谈风月，不论恩仇。"然而觥筹交错之间，刀光在袖中若隐若现。这一杯酒，是敬英雄，还是送行酒？',
+      availableActions: ['ally', 'betray', 'fight', 'train'],
+    },
+  ],
+  4: [
+    {
+      title: '通缉令',
+      description: '声望第一被挂上江湖通缉令！击败他获50声望！但通缉犯有侠义光环加持！',
+      flavor: '城门口贴出了一张鲜红的通缉令——声望最高者赫然在列！赏金丰厚，引得众人蠢蠢欲动。但通缉犯岂是易与之辈？侠义光环护身，实力更胜一筹。',
+      availableActions: ['fight', 'train', 'ally', 'rest'],
+    },
+    {
+      title: '天降横财',
+      description: '一只金雕从天而降，爪中抓着三件神兵！选explore争夺，选fight围猎金雕！',
+      flavor: '一声鹰啸划破长空，一只浑身金羽的巨雕盘旋而下，利爪中紧攥三件闪烁寒光的兵器。传说这是前朝武林盟主的随身宝物——谁能抢到手，便是天意所归。',
+      availableActions: ['explore', 'fight', 'train', 'rest'],
+    },
+    {
+      title: '武林公审',
+      description: '六扇门突然介入！声望最高者被审！其他人可声援或落井下石！',
+      flavor: '一队官兵鱼贯而入，为首的铁面判官冷声宣布："奉朝廷旨意，声望最高者涉嫌江湖作乱，即刻受审！"群雄哗然——是仗义执言，还是趁机踩一脚？',
+      availableActions: ['fight', 'ally', 'train', 'rest'],
+    },
+  ],
+};
+
+// R5/R6 固定不变（机制绑定）
+const FIXED_EVENTS: Record<number, DirectorEvent> = {
   5: {
     title: '生死状',
     description: '生死状已开！签字攻击翻倍+绝招解锁，但输了直接退场！不签则安全但掉声望。',
@@ -204,3 +261,32 @@ export const DIRECTOR_EVENTS: Record<number, {
     availableActions: ['attack', 'defend', 'ultimate', 'bluff'],
   },
 };
+
+// 根据 gameId 确定性选择变体
+function pickVariant(gameId: string, roundNumber: number): DirectorEvent {
+  if (FIXED_EVENTS[roundNumber]) return FIXED_EVENTS[roundNumber];
+  const variants = DIRECTOR_EVENT_VARIANTS[roundNumber];
+  if (!variants || variants.length === 0) return FIXED_EVENTS[5]; // fallback
+  let hash = 0;
+  const seed = `${gameId}:director:${roundNumber}`;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+  }
+  return variants[Math.abs(hash) % variants.length];
+}
+
+// 兼容旧代码：默认使用第一个变体
+export const DIRECTOR_EVENTS: Record<number, DirectorEvent> = {
+  1: DIRECTOR_EVENT_VARIANTS[1][0],
+  2: DIRECTOR_EVENT_VARIANTS[2][0],
+  3: DIRECTOR_EVENT_VARIANTS[3][0],
+  4: DIRECTOR_EVENT_VARIANTS[4][0],
+  5: FIXED_EVENTS[5],
+  6: FIXED_EVENTS[6],
+};
+
+// 需要 gameId 的调用方用这个
+export function getDirectorEvent(roundNumber: number, gameId?: string): DirectorEvent {
+  if (!gameId) return DIRECTOR_EVENTS[roundNumber];
+  return pickVariant(gameId, roundNumber);
+}

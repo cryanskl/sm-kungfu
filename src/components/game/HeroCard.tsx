@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { GameHeroSnapshot } from '@/lib/types';
 
 const PERSONALITY_EMOJI: Record<string, string> = {
@@ -62,7 +63,7 @@ const FACTION_GLOW: Record<string, string> = {
   '无门无派': 'rgba(154, 144, 128, 0.2)',
 };
 
-export function HeroCard({ hero, compact = false, rank }: { hero: GameHeroSnapshot; compact?: boolean; rank?: number }) {
+export const HeroCard = memo(function HeroCard({ hero, compact = false, rank }: { hero: GameHeroSnapshot; compact?: boolean; rank?: number }) {
   const hpPercent = Math.max(0, (hero.hp / (hero.maxHp || 100)) * 100);
   const hpColor = hpPercent > 60 ? 'bg-jade' : hpPercent > 30 ? 'bg-gold' : 'bg-vermillion';
   const hpGlow = hpPercent > 60 ? '' : hpPercent > 30 ? 'shadow-[0_0_6px_var(--gold-glow)]' : 'shadow-[0_0_6px_var(--vermillion-glow)]';
@@ -88,7 +89,11 @@ export function HeroCard({ hero, compact = false, rank }: { hero: GameHeroSnapsh
         ) : (
           <span className="flex-shrink-0 w-5" />
         )}
-        <span className="text-lg flex-shrink-0 drop-shadow-sm">{fEmoji}</span>
+        {hero.avatarUrl ? (
+          <img src={hero.avatarUrl} alt="" className="w-6 h-6 rounded-full flex-shrink-0 object-cover ring-1 ring-ink-light/30" />
+        ) : (
+          <span className="text-lg flex-shrink-0 drop-shadow-sm">{fEmoji}</span>
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             {rank === 1 && <span className="text-xs">👑</span>}
@@ -120,7 +125,11 @@ export function HeroCard({ hero, compact = false, rank }: { hero: GameHeroSnapsh
     >
       {/* Header */}
       <div className="flex items-center gap-2.5 mb-3">
-        <div className="text-3xl drop-shadow-sm">{fEmoji}</div>
+        {hero.avatarUrl ? (
+          <img src={hero.avatarUrl} alt="" className="w-10 h-10 rounded-full object-cover ring-2 ring-ink-light/30 flex-shrink-0" />
+        ) : (
+          <div className="text-3xl drop-shadow-sm">{fEmoji}</div>
+        )}
         <div className="flex-1 min-w-0">
           <div className="font-display font-bold text-base tracking-wide flex items-center gap-1.5">
             {rank === 1 && <span className="text-sm">👑</span>}
@@ -210,7 +219,7 @@ export function HeroCard({ hero, compact = false, rank }: { hero: GameHeroSnapsh
       )}
     </div>
   );
-}
+});
 
 function AttrBar({ label, value, color }: { label: string; value: number; color: string }) {
   const colorMap: Record<string, string> = {

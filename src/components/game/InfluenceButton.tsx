@@ -23,16 +23,21 @@ export function InfluenceButton({ targetHeroId, targetHeroName, influenceUsed, o
 
   const handleInfluence = async (effectType: 'buff' | 'debuff') => {
     setSubmitting(true);
-    await onInfluence(targetHeroId, effectType);
-    setSubmitting(false);
-    setShowPanel(false);
+    try {
+      await onInfluence(targetHeroId, effectType);
+      setShowPanel(false);
+    } catch (e) {
+      console.error('Influence failed:', e);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
     <div className="relative">
       <button
         onClick={() => setShowPanel(!showPanel)}
-        className="px-2 py-1.5 text-xs rounded-lg border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 transition-all"
+        className="px-2 py-1.5 text-xs rounded-lg border border-gold/30 text-gold hover:bg-gold/10 transition-all"
         title="定向影响（整局一次）"
       >
         ⚡影响
@@ -48,7 +53,7 @@ export function InfluenceButton({ targetHeroId, targetHeroName, influenceUsed, o
             <button
               onClick={() => handleInfluence('buff')}
               disabled={submitting}
-              className="w-full px-2 py-1.5 text-xs rounded border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40"
+              className="w-full px-2 py-1.5 text-xs rounded border border-jade/30 text-jade hover:bg-jade/10 disabled:opacity-40"
             >
               +10 气血或声望
             </button>

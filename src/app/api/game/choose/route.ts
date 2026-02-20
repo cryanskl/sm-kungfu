@@ -9,6 +9,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Not logged in' }, { status: 401 });
   }
 
+  try {
   const { gameId, encounterIds } = await request.json();
   if (!gameId || !Array.isArray(encounterIds) || encounterIds.length !== C.CHOICES_PER_HERO) {
     return NextResponse.json({ error: `Must choose exactly ${C.CHOICES_PER_HERO} encounters` }, { status: 400 });
@@ -49,15 +50,29 @@ export async function POST(request: NextRequest) {
     chosen_encounters: encounterIds,
   }).eq('id', gh.id);
 
-  // Update hero_choice_status in game_state
-  const { data: gs } = await supabaseAdmin.from('game_state').select('hero_choice_status').eq('id', 'current').single();
-  const status = (gs?.hero_choice_status || {}) as Record<string, string>;
-  status[heroId] = 'chosen';
+  // 从 game_heroes 派生 hero_choice_status（避免读-改-写竞态）
+  const { data: allGh } = await supabaseAdmin
+    .from('game_heroes')
+    .select('hero_id, chosen_encounters')
+    .eq('game_id', gameId)
+    .eq('is_eliminated', false);
+
+  const freshStatus: Record<string, string> = {};
+  for (const h of allGh || []) {
+    if (h.chosen_encounters && (h.chosen_encounters as string[]).length > 0) {
+      freshStatus[h.hero_id] = 'chosen';
+    }
+  }
+
   await supabaseAdmin.from('game_state').update({
-    hero_choice_status: status,
+    hero_choice_status: freshStatus,
     updated_at: new Date().toISOString(),
   }).eq('id', 'current');
 
   const chosen = (gh.pending_choices as any[]).filter((c: any) => encounterIds.includes(c.id));
   return NextResponse.json({ success: true, chosen });
+  } catch (err: any) {
+    console.error('[choose] error:', err);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
 }

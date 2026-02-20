@@ -8,7 +8,8 @@ import { betRateLimiter } from '@/lib/rate-limit';
 export async function POST(request: NextRequest) {
   try {
     const { heroId, amount } = await request.json();
-    if (!heroId || !amount || typeof amount !== 'number' || amount <= 0) {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!heroId || typeof heroId !== 'string' || !UUID_RE.test(heroId) || !amount || typeof amount !== 'number' || amount <= 0) {
       return NextResponse.json({ error: '参数有误' }, { status: 400 });
     }
     const ALL_BET_AMOUNTS: number[] = [...new Set([...BET_AMOUNTS, ...MID_GAME_BET_AMOUNTS])];
@@ -153,6 +154,6 @@ export async function POST(request: NextRequest) {
     return response;
   } catch (err: any) {
     console.error('Bet error:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

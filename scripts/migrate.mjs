@@ -141,6 +141,9 @@ $$ LANGUAGE plpgsql`,
   // 功能2: 观众预测
   `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS predictions JSONB DEFAULT NULL`,
   `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS prediction_results JSONB DEFAULT NULL`,
+  // 成就实时弹窗
+  `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS round_achievements JSONB DEFAULT '[]'`,
+  `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS awarded_achievements JSONB DEFAULT '[]'`,
 ];
 
 async function tryExecSQL(sql) {

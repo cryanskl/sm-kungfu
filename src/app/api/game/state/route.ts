@@ -45,11 +45,25 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  // ETag: 基于 updated_at 时间戳，避免无变化时传输全量数据
+  const updatedAt = data.updated_at || '';
+  const etag = `"${updatedAt}"`;
+  const ifNoneMatch = request.headers.get('if-none-match');
+
+  // 非 choosing 阶段可直接用 ETag 判断（choosing 阶段有玩家特定数据，不能 304）
+  const isChoosing = data.status?.startsWith('choosing_');
+  if (ifNoneMatch === etag && !isChoosing) {
+    return new NextResponse(null, {
+      status: 304,
+      headers: { 'ETag': etag, 'Cache-Control': 'no-cache' },
+    });
+  }
+
   const gameState = mapGameStateRow(data);
   const withDynamic = computeDynamicFields(gameState, data);
 
   // Inject player-specific pending choices during choosing phase
-  if (withDynamic.status?.startsWith('choosing_')) {
+  if (isChoosing) {
     const { heroId } = getHeroIdFromCookies(request.cookies);
     if (heroId && withDynamic.gameId) {
       const { data: gh } = await supabaseAdmin
@@ -66,7 +80,8 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json(withDynamic, {
     headers: {
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Cache-Control': 'no-cache',
+      'ETag': etag,
     },
   });
 }

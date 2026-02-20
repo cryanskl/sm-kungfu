@@ -87,7 +87,7 @@ export function HeroLeaderboard() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-80 bg-ink-dark border border-gold/15 rounded-xl shadow-ink overflow-hidden z-[60] animate-fade-in-down">
+        <div className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-ink-dark border border-gold/15 rounded-xl shadow-ink overflow-hidden z-[60] animate-fade-in-down">
           {/* Header */}
           <div className="px-4 pt-4 pb-3 border-b border-gold/10">
             <h3 className="font-display font-bold text-sm text-gold tracking-wide">🏅 豪侠榜</h3>

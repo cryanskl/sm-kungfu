@@ -6,12 +6,12 @@ import { mapGameStateRow } from '@/lib/game/state-mapper';
 import { SecondMeClient } from '@/lib/game/secondme-client';
 import { introPrompt, bioPrompt, generateFallbackBio } from '@/lib/game/prompts';
 import { dashscopeChat } from '@/lib/game/dashscope';
-import { requireSession } from '@/lib/auth';
+import { requireEngineSecret } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
-    const authError = await requireSession();
-    if (authError) return authError;
+    const authErr = requireEngineSecret(request);
+    if (authErr) return authErr;
     // 获取当前等待中的游戏
     const { data: currentGame } = await supabaseAdmin
       .from('games')
@@ -67,6 +67,11 @@ export async function POST(request: NextRequest) {
 
     const humanCount = existingHeroes?.filter((gh: any) => !gh.hero?.is_npc).length || 0;
     if (humanCount === 0) {
+      // 回滚状态，避免游戏卡在 'starting'
+      await supabaseAdmin.from('games')
+        .update({ status: 'countdown' })
+        .eq('id', currentGame.id)
+        .eq('status', 'starting');
       return NextResponse.json({ error: 'No human players' }, { status: 400 });
     }
 
@@ -339,7 +344,7 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    await supabaseAdmin.from('game_state').upsert({
+    const { error: gsError } = await supabaseAdmin.from('game_state').upsert({
       id: 'current',
       game_id: currentGame.id,
       status: 'intro',
@@ -357,6 +362,9 @@ export async function POST(request: NextRequest) {
       phase_started_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
+    if (gsError) {
+      console.error('[Engine Start] game_state upsert failed:', gsError.message);
+    }
 
     // Read fresh game_state for immediate client update
     const { data: freshState } = await supabaseAdmin
@@ -373,6 +381,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (err: any) {
     console.error('Engine start error:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

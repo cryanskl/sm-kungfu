@@ -30,7 +30,7 @@ export function WulinWeekly({ gameState, battleStats }: WulinWeeklyProps) {
       </div>
 
       {/* Round Summaries */}
-      {stats.roundSummaries.length > 0 && (
+      {stats.roundSummaries?.length > 0 && (
         <div className="card-wuxia p-4">
           <h4 className="font-display font-bold text-sm mb-3 tracking-wide brush-underline">
             📖 各回合纪要
@@ -93,7 +93,7 @@ export function WulinWeekly({ gameState, battleStats }: WulinWeeklyProps) {
       </div>
 
       {/* Elimination Timeline */}
-      {stats.eliminationTimeline.length > 0 && (
+      {stats.eliminationTimeline?.length > 0 && (
         <div className="card-wuxia p-4">
           <h4 className="font-display font-bold text-sm mb-3 tracking-wide brush-underline">
             💀 淘汰时间线
@@ -104,7 +104,7 @@ export function WulinWeekly({ gameState, battleStats }: WulinWeeklyProps) {
                 key={i}
                 className="text-xs bg-ink-dark/80 border border-ink-light/20 px-2 py-1 rounded"
               >
-                R{e.round} <span className="text-red-400">{e.heroName}</span>
+                R{e.round} <span className="text-vermillion">{e.heroName}</span>
               </span>
             ))}
           </div>
@@ -112,27 +112,27 @@ export function WulinWeekly({ gameState, battleStats }: WulinWeeklyProps) {
       )}
 
       {/* Alliance & Betrayal Highlights */}
-      {(stats.allianceHighlights.length > 0 || stats.betrayalHighlights.length > 0) && (
+      {((stats.allianceHighlights?.length ?? 0) > 0 || (stats.betrayalHighlights?.length ?? 0) > 0) && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {stats.allianceHighlights.length > 0 && (
+          {(stats.allianceHighlights?.length ?? 0) > 0 && (
             <div className="card-wuxia p-4">
               <h4 className="font-display font-bold text-sm mb-2 tracking-wide">🤝 结盟录</h4>
               <div className="space-y-1">
                 {stats.allianceHighlights.slice(0, 5).map((a, i) => (
                   <p key={i} className="text-xs text-[--text-dim]">
-                    R{a.round}: <span className="text-cyan-400">{a.heroName}</span> & <span className="text-cyan-400">{a.allyName}</span>
+                    R{a.round}: <span className="text-[--accent-blue]">{a.heroName}</span> & <span className="text-[--accent-blue]">{a.allyName}</span>
                   </p>
                 ))}
               </div>
             </div>
           )}
-          {stats.betrayalHighlights.length > 0 && (
+          {(stats.betrayalHighlights?.length ?? 0) > 0 && (
             <div className="card-wuxia p-4">
               <h4 className="font-display font-bold text-sm mb-2 tracking-wide">🗡️ 背叛录</h4>
               <div className="space-y-1">
                 {stats.betrayalHighlights.slice(0, 5).map((b, i) => (
                   <p key={i} className="text-xs text-[--text-dim]">
-                    R{b.round}: <span className="text-red-400">{b.heroName}</span> → {b.targetName}
+                    R{b.round}: <span className="text-vermillion">{b.heroName}</span> → {b.targetName}
                   </p>
                 ))}
               </div>
@@ -164,7 +164,7 @@ export function WulinWeekly({ gameState, battleStats }: WulinWeeklyProps) {
 
       {/* Stats Footer */}
       <div className="text-center text-xs text-[--text-dim] tracking-wide">
-        全场 {stats.totalFights} 场战斗 · {stats.totalBetrayals} 次背叛 · {stats.totalAlliances} 次结盟 · {stats.totalEliminations} 人淘汰
+        全场 {stats?.totalFights ?? 0} 场战斗 · {stats?.totalBetrayals ?? 0} 次背叛 · {stats?.totalAlliances ?? 0} 次结盟 · {stats?.totalEliminations ?? 0} 人淘汰
       </div>
     </div>
   );

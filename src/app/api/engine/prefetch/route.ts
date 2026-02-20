@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prefetchDecisions } from '@/lib/game/engine';
-import { requireSession } from '@/lib/auth';
+import { requireEngineSecret } from '@/lib/auth';
 
 export const maxDuration = 30;
 
@@ -9,8 +9,8 @@ const recentPrefetch = new Map<string, number>();
 
 export async function POST(request: NextRequest) {
   try {
-    const authError = await requireSession();
-    if (authError) return authError;
+    const authErr = requireEngineSecret(request);
+    if (authErr) return authErr;
     const { gameId, roundNumber } = await request.json();
 
     if (!gameId || !roundNumber || roundNumber < 1 || roundNumber > 5) {
@@ -34,6 +34,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: success });
   } catch (err: any) {
     console.error('Prefetch error:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

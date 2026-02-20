@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { GameEvent } from '@/lib/types';
 
 function stableKey(event: Partial<GameEvent>, index: number): string {
@@ -69,7 +69,7 @@ export function EventFeed({ events, highlightLatest, activeReveal, highlightHero
   }, [events.length, highlightLatest]);
 
   // 过滤掉 decision 类型事件（纯宣言，已在其他事件中体现）
-  const filtered = events.filter(e => e.eventType !== 'decision');
+  const filtered = useMemo(() => events.filter(e => e.eventType !== 'decision'), [events]);
 
   if (!filtered || filtered.length === 0) {
     return (
@@ -83,7 +83,7 @@ export function EventFeed({ events, highlightLatest, activeReveal, highlightHero
   // Chronological mode during reveal
   if (highlightLatest) {
     return (
-      <div ref={scrollRef} className="space-y-2 max-h-[600px] overflow-y-auto pr-2 scroll-fade">
+      <div ref={scrollRef} className="space-y-2 max-h-[50vh] md:max-h-[600px] overflow-y-auto pr-2 scroll-fade">
         {filtered.map((event, i) => {
           const isLast = i === filtered.length - 1;
           const isHeroEvent = highlightHeroId && (event.heroId === highlightHeroId || event.targetHeroId === highlightHeroId);
@@ -116,15 +116,17 @@ export function EventFeed({ events, highlightLatest, activeReveal, highlightHero
     );
   }
 
-  // Static mode: priority-grouped layout
-  const lowEvents = filtered.filter(e => (e.priority || 1) <= 2 && e.eventType !== 'director_event');
-  const midEvents = filtered.filter(e => (e.priority || 1) > 2 && (e.priority || 1) <= 4);
-  const highEvents = filtered.filter(e => (e.priority || 1) > 4 || e.eventType === 'director_event');
+  // Static mode: priority-grouped layout (memoized to avoid 3 re-filters per render)
+  const { lowEvents, midEvents, highEvents } = useMemo(() => ({
+    lowEvents: filtered.filter(e => (e.priority || 1) <= 2 && e.eventType !== 'director_event'),
+    midEvents: filtered.filter(e => (e.priority || 1) > 2 && (e.priority || 1) <= 4),
+    highEvents: filtered.filter(e => (e.priority || 1) > 4 || e.eventType === 'director_event'),
+  }), [filtered]);
 
   const shouldAnimate = !hasAnimated;
 
   return (
-    <div className="space-y-2 max-h-[600px] overflow-y-auto pr-2 scroll-fade">
+    <div className="space-y-2 max-h-[50vh] md:max-h-[600px] overflow-y-auto pr-2 scroll-fade">
       {/* High priority events */}
       {highEvents.map((event, i) => (
         <div key={stableKey(event, i)}

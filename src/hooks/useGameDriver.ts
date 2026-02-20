@@ -3,6 +3,11 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { useWulinStore } from '@/stores/gameStore';
 
+const ENGINE_HEADERS: HeadersInit = {
+  'Content-Type': 'application/json',
+  ...(process.env.NEXT_PUBLIC_ENGINE_SECRET ? { 'X-Engine-Secret': process.env.NEXT_PUBLIC_ENGINE_SECRET } : {}),
+};
+
 // 前端驱动器：根据游戏状态自动推进回合
 export function useGameDriver() {
   const { gameState, user } = useWulinStore();
@@ -37,7 +42,7 @@ export function useGameDriver() {
     if (isProcessing) return;
     setIsProcessing(true);
     try {
-      await fetch('/api/engine/start', { method: 'POST' });
+      await fetch('/api/engine/start', { method: 'POST', headers: ENGINE_HEADERS });
     } catch { /* ignore */ }
     setIsProcessing(false);
   }, [isProcessing]);
@@ -49,7 +54,7 @@ export function useGameDriver() {
     try {
       await fetch('/api/engine/choose-start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: ENGINE_HEADERS,
         body: JSON.stringify({ gameId, roundNumber }),
       });
     } catch (e) {
@@ -65,7 +70,7 @@ export function useGameDriver() {
     try {
       const res = await fetch('/api/engine/round', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: ENGINE_HEADERS,
         body: JSON.stringify({ gameId, roundNumber }),
       });
       const data = await res.json();

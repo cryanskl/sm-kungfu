@@ -60,8 +60,8 @@ export function GameHeader({
               「{gameState.theme}」
             </span>
           )}
-          <HeroLeaderboard />
-          <RichLeaderboard />
+          <span className="hidden sm:block"><HeroLeaderboard /></span>
+          <span className="hidden sm:block"><RichLeaderboard /></span>
         </div>
 
         {/* Center: Round info */}

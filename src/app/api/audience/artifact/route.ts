@@ -7,7 +7,8 @@ import { ARTIFACTS } from '@/lib/game/constants';
 export async function POST(request: NextRequest) {
   try {
     const { artifactId, heroId } = await request.json();
-    if (!artifactId || !heroId) {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!artifactId || !heroId || typeof heroId !== 'string' || !UUID_RE.test(heroId)) {
       return NextResponse.json({ error: '参数有误' }, { status: 400 });
     }
 
@@ -155,6 +156,6 @@ export async function POST(request: NextRequest) {
     return response;
   } catch (err: any) {
     console.error('Artifact gift error:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

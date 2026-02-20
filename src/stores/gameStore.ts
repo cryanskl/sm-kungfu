@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import { GameState, GameEvent, DanmakuItem } from '@/lib/types';
 import { VIEW_SWITCH_COOLDOWN } from '@/lib/game/constants';
 
+// ETag 缓存：避免无变化时重新解析和更新 state
+let lastEtag: string | null = null;
+
 interface UserState {
   userId: string | null;
   heroId: string | null;
@@ -35,11 +38,6 @@ interface WulinStore {
   startPolling: () => Promise<void>;
   stopPolling: () => void;
   pollNow: () => Promise<void>;
-
-  // SSE 实时推送
-  eventSource: EventSource | null;
-  startSSE: () => void;
-  stopSSE: () => void;
 
   // 前端播放状态
   currentEvents: GameEvent[];
@@ -99,20 +97,25 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
     set(updates as any);
   },
 
-  // 轮询
+  // 轮询（带 ETag 条件请求，304 时跳过解析和状态更新）
   isPolling: false,
   startPolling: async () => {
     if (get().isPolling) return;
     set({ isPolling: true });
 
-    // 首次立即拉取并等待结果，消除白屏
-    try {
-      const res = await fetch('/api/game/state');
+    const fetchState = async () => {
+      const headers: HeadersInit = lastEtag ? { 'If-None-Match': lastEtag } : {};
+      const res = await fetch('/api/game/state', { headers });
+      if (res.status === 304) return; // 无变化，跳过
       if (res.ok) {
+        lastEtag = res.headers.get('etag');
         const data = await res.json();
         get().setGameState(data);
       }
-    } catch { /* ignore */ }
+    };
+
+    // 首次立即拉取并等待结果，消除白屏
+    try { await fetchState(); } catch { /* ignore */ }
 
     // 智能轮询：根据游戏阶段调整间隔
     const getInterval = () => {
@@ -124,14 +127,7 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
 
     const poll = async () => {
       if (!get().isPolling) return;
-      try {
-        const res = await fetch('/api/game/state');
-        if (res.ok) {
-          const data = await res.json();
-          get().setGameState(data);
-        }
-      } catch { /* ignore */ }
-
+      try { await fetchState(); } catch { /* ignore */ }
       if (get().isPolling) {
         setTimeout(poll, getInterval());
       }
@@ -141,45 +137,14 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
   stopPolling: () => set({ isPolling: false }),
   pollNow: async () => {
     try {
+      // pollNow 强制跳过 ETag 以获取最新数据
       const res = await fetch('/api/game/state');
       if (res.ok) {
+        lastEtag = res.headers.get('etag');
         const data = await res.json();
         get().setGameState(data);
       }
     } catch { /* ignore */ }
-  },
-
-  // SSE 实时推送
-  eventSource: null,
-  startSSE: () => {
-    if (get().eventSource) return;
-    const es = new EventSource('/api/game/stream');
-    let firstMessage = true;
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        get().setGameState(data);
-        // SSE 连接成功，停止轮询
-        if (firstMessage) {
-          firstMessage = false;
-          get().stopPolling();
-        }
-      } catch { /* ignore parse errors */ }
-    };
-    es.onerror = () => {
-      es.close();
-      set({ eventSource: null });
-      // 降级到轮询
-      get().startPolling();
-    };
-    set({ eventSource: es });
-  },
-  stopSSE: () => {
-    const es = get().eventSource;
-    if (es) {
-      es.close();
-      set({ eventSource: null });
-    }
   },
 
   // 前端播放
@@ -191,7 +156,7 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
   setViewingHero: (heroId) => {
     const now = Date.now();
     const last = get().lastViewSwitch;
-    if (now - last < VIEW_SWITCH_COOLDOWN) return; // 3 秒防抖
+    if (now - last < VIEW_SWITCH_COOLDOWN) return; // 500ms 防抖
     set({ viewingHeroId: heroId, lastViewSwitch: now });
   },
   lastViewSwitch: 0,
@@ -234,28 +199,38 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
   chosenEncounterIds: [],
   influenceUsed: false,
   submitChoices: async (gameId: string, encounterIds: string[]) => {
-    const res = await fetch('/api/game/choose', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gameId, encounterIds }),
-    });
-    if (res.ok) {
-      set({ chosenEncounterIds: encounterIds });
-      return true;
+    try {
+      const res = await fetch('/api/game/choose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, encounterIds }),
+      });
+      if (res.ok) {
+        set({ chosenEncounterIds: encounterIds });
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error('submitChoices failed:', e);
+      return false;
     }
-    return false;
   },
   submitInfluence: async (targetHeroId: string, effectType: 'buff' | 'debuff') => {
-    const res = await fetch('/api/audience/influence', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetHeroId, effectType }),
-    });
-    if (res.ok) {
-      set({ influenceUsed: true });
-      return true;
+    try {
+      const res = await fetch('/api/audience/influence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetHeroId, effectType }),
+      });
+      if (res.ok) {
+        set({ influenceUsed: true });
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error('submitInfluence failed:', e);
+      return false;
     }
-    return false;
   },
   resetChoices: () => set({ chosenEncounterIds: [] }),
 }));

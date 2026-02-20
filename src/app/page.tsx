@@ -19,6 +19,11 @@ import { GOSSIP_LINES, LOADING_LINES, INTRO_DURATION } from '@/lib/game/constant
 import { useEventRevealer } from '@/hooks/useEventRevealer';
 import { generateCommentary, generateWelcomeDanmaku, resetEliminationCount, generateCelebrationDanmaku } from '@/lib/game/commentary';
 
+const ENGINE_HEADERS: HeadersInit = {
+  'Content-Type': 'application/json',
+  ...(process.env.NEXT_PUBLIC_ENGINE_SECRET ? { 'X-Engine-Secret': process.env.NEXT_PUBLIC_ENGINE_SECRET } : {}),
+};
+
 function statusLabel(status: string | undefined): string {
   if (!status) return '等待中';
   if (status === 'waiting') return '等待入场';
@@ -242,6 +247,20 @@ export default function Home() {
     };
   }, []);
 
+  // Tab 可见性感知：隐藏时暂停轮询，可见时恢复并立即同步
+  useEffect(() => {
+    const handleVisibility = () => {
+      const store = useWulinStore.getState();
+      if (document.hidden) {
+        store.stopPolling();
+      } else {
+        store.startPolling();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
+
   // 候补弹窗：游戏进入 waiting/countdown 时自动关闭 + 重置赛后状态
   useEffect(() => {
     if (gameState?.status === 'waiting' || gameState?.status === 'countdown') {
@@ -334,7 +353,7 @@ export default function Home() {
         }, 1000);
       }
       fetch('/api/engine/prefetch', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: ENGINE_HEADERS,
         body: JSON.stringify({ gameId, roundNumber: 1 }),
       }).catch(() => {});
       // intro 结束后触发选择阶段
@@ -347,7 +366,7 @@ export default function Home() {
       if (!isNaN(pendingRound) && pendingRound >= 2 && pendingRound <= 5) {
         lastTriggeredRef.current = key;
         fetch('/api/engine/prefetch', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: ENGINE_HEADERS,
           body: JSON.stringify({ gameId, roundNumber: pendingRound }),
         }).catch(() => {});
         const elapsed = getPhaseElapsedSec();
@@ -477,15 +496,22 @@ export default function Home() {
     return () => { if (finalRetryRef.current) { clearInterval(finalRetryRef.current); finalRetryRef.current = null; } };
   }, [artifactTimer, gameState?.status, gameState?.gameId]);
 
-  // ending 兜底重试
+  // ending 兜底重试（使用 ref 防止 isRevealing 切换时重复触发 triggerEnd）
   const endRetryRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const endTriggeredForRef = useRef<string | null>(null);
   useEffect(() => {
     if (endRetryRef.current) { clearInterval(endRetryRef.current); endRetryRef.current = null; }
     if (gameState?.status === 'ending' && gameState?.gameId && !isRevealing) {
-      triggerEnd(gameState.gameId);
       const gid = gameState.gameId;
+      // 只在首次进入 ending 阶段时立即触发，避免 isRevealing 切换导致重复调用
+      if (endTriggeredForRef.current !== gid) {
+        endTriggeredForRef.current = gid;
+        triggerEnd(gid);
+      }
       endRetryRef.current = setInterval(() => { triggerEnd(gid); }, 5000);
     }
+    // 离开 ending 阶段时重置
+    if (gameState?.status !== 'ending') endTriggeredForRef.current = null;
     return () => { if (endRetryRef.current) { clearInterval(endRetryRef.current); endRetryRef.current = null; } };
   }, [isRevealing, gameState?.status, gameState?.gameId]);
 
@@ -705,7 +731,7 @@ export default function Home() {
     const ac = new AbortController();
     const tm = setTimeout(() => ac.abort(), 30000);
     try {
-      const res = await fetch('/api/engine/start', { method: 'POST', signal: ac.signal });
+      const res = await fetch('/api/engine/start', { method: 'POST', headers: ENGINE_HEADERS, signal: ac.signal });
       if (res.ok) {
         const data = await res.json();
         if (data.gameState) setGameState(data.gameState);
@@ -729,7 +755,7 @@ export default function Home() {
     try {
       const res = await fetch('/api/engine/round', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: ENGINE_HEADERS,
         body: JSON.stringify({ gameId, roundNumber }),
         signal: ac.signal,
       });
@@ -756,7 +782,7 @@ export default function Home() {
     try {
       const res = await fetch('/api/engine/choose-start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: ENGINE_HEADERS,
         body: JSON.stringify({ gameId, roundNumber }),
       });
       if (res.ok) {
@@ -787,7 +813,7 @@ export default function Home() {
     try {
       const res = await fetch('/api/engine/finals', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: ENGINE_HEADERS,
         body: JSON.stringify({ gameId }),
         signal: ac.signal,
       });
@@ -816,7 +842,7 @@ export default function Home() {
     try {
       const res = await fetch('/api/engine/final', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: ENGINE_HEADERS,
         body: JSON.stringify({ gameId }),
         signal: ac.signal,
       });
@@ -842,7 +868,7 @@ export default function Home() {
     try {
       const res = await fetch('/api/engine/end', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: ENGINE_HEADERS,
         body: JSON.stringify({ gameId }),
       });
       if (res.ok) {

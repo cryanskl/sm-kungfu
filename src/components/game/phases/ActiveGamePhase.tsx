@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { GameState, GameEvent, GameHeroSnapshot, RankEntry } from '@/lib/types';
 import { HeroCard } from '@/components/game/HeroCard';
 import { EventFeed } from '@/components/game/EventFeed';
@@ -51,8 +51,42 @@ export function ActiveGamePhase({
     return event.heroId === activeViewId || event.targetHeroId === activeViewId;
   };
 
+  // 移动端紧凑血量摘要（memoized，避免每次轮询重排序）
+  const sortedAlive = useMemo(() =>
+    liveHeroes.filter(h => !h.isEliminated).sort((a, b) => (b.hp || 0) - (a.hp || 0)),
+    [liveHeroes],
+  );
+
+  // 英雄列表排序（淘汰者排末尾，按血量降序）
+  const sortedHeroList = useMemo(() =>
+    liveHeroes.slice().sort((a, b) => {
+      if (a.isEliminated !== b.isEliminated) return a.isEliminated ? 1 : -1;
+      return (b.hp || 0) - (a.hp || 0);
+    }),
+    [liveHeroes],
+  );
+
   return (
     <div className="grid grid-cols-12 gap-4 lg:gap-6 phase-enter">
+      {/* Mobile-only compact HP strip */}
+      <div className="col-span-12 lg:hidden order-0 flex flex-wrap gap-1.5 px-1">
+        {sortedAlive.map(h => {
+          const hpPct = Math.max(0, (h.hp || 0) / (h.maxHp || 100) * 100);
+          const isMe = h.heroId === myHeroId;
+          return (
+            <div key={h.heroId} className={`flex items-center gap-1 text-[10px] ${isMe ? 'text-gold' : 'text-[--text-dim]'}`}>
+              <span className="truncate max-w-[3rem]">{h.heroName.slice(0, 2)}</span>
+              <div className="w-8 h-1.5 bg-ink-light/20 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${hpPct > 50 ? 'bg-jade' : hpPct > 25 ? 'bg-gold' : 'bg-vermillion'}`}
+                  style={{ width: `${hpPct}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       {/* Left: Heroes — last on mobile */}
       <div className="col-span-12 lg:col-span-3 order-3 lg:order-1 flex flex-col">
         <RelationshipGraph />
@@ -61,13 +95,7 @@ export function ActiveGamePhase({
           <span className="text-[10px] text-[--text-dim] font-normal ml-1 opacity-60">血量↓</span>
         </h3>
         <div className="space-y-1.5 flex-1 min-h-0 overflow-y-auto pr-1 scroll-fade">
-          {liveHeroes
-            .slice()
-            .sort((a, b) => {
-              if (a.isEliminated !== b.isEliminated) return a.isEliminated ? 1 : -1;
-              return (b.hp || 0) - (a.hp || 0);
-            })
-            .map((hero, idx) => {
+          {sortedHeroList.map((hero, idx) => {
               const hpRank = hero.isEliminated ? undefined : idx + 1;
               return (
                 <div key={hero.heroId} onClick={() => setShowDetail(
@@ -126,6 +154,11 @@ export function ActiveGamePhase({
             <span className="text-[10px] text-gold ml-1">可切换观战</span>
           )}
         </div>
+        {!influenceUsed && myHeroId && myEventsCompleted && !status?.startsWith('choosing_') && (
+          <p className="text-[10px] text-gold/60 px-1 -mt-1 mb-1">
+            💡 切换到其他侠客视角，可使用一次「⚡影响」
+          </p>
+        )}
 
         {status?.startsWith('choosing_') ? (
           <ChoosingPanel
@@ -163,6 +196,14 @@ export function ActiveGamePhase({
                     <span className="text-[10px] text-gold font-normal">
                       — {liveHeroes.find(h => h.heroId === activeViewId)?.heroName || ''}视角
                     </span>
+                  )}
+                  {isRevealing && (
+                    <button
+                      onClick={onSkipReveal}
+                      className="ml-auto text-[10px] text-[--text-dim] hover:text-gold border border-ink-light/20 hover:border-gold/40 rounded px-2 py-0.5 transition-colors"
+                    >
+                      快进 ⏩
+                    </button>
                   )}
                 </h3>
                 {activeViewId && activeViewId !== myHeroId && !status?.startsWith('choosing_') && (

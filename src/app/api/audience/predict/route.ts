@@ -6,7 +6,8 @@ import { cookies } from 'next/headers';
 export async function POST(request: NextRequest) {
   try {
     const { heroId, type } = await request.json();
-    if (!heroId || !type || !['elimination', 'champion'].includes(type)) {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!heroId || typeof heroId !== 'string' || !UUID_RE.test(heroId) || !type || !['elimination', 'champion'].includes(type)) {
       return NextResponse.json({ error: '参数有误' }, { status: 400 });
     }
 
@@ -76,6 +77,6 @@ export async function POST(request: NextRequest) {
     return response;
   } catch (err: any) {
     console.error('Predict error:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

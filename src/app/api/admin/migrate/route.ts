@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireSession } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireSession } from '@/lib/auth';
+
+const ADMIN_HERO_IDS = (process.env.ADMIN_HERO_IDS || '').split(',').filter(Boolean);
 
 const MIGRATION_SQL = `
 -- 服务器权威倒计时
@@ -24,6 +26,10 @@ ALTER TABLE artifact_gifts ENABLE ROW LEVEL SECURITY;
 
 -- 确保所有英雄都有初始余额
 UPDATE heroes SET balance = 10000 WHERE balance IS NULL;
+
+-- 成就实时弹窗
+ALTER TABLE game_state ADD COLUMN IF NOT EXISTS round_achievements JSONB DEFAULT '[]';
+ALTER TABLE game_state ADD COLUMN IF NOT EXISTS awarded_achievements JSONB DEFAULT '[]';
 `.trim();
 
 // 拆成单条语句逐条执行
@@ -33,8 +39,18 @@ const STATEMENTS = MIGRATION_SQL
   .filter(s => s.length > 0);
 
 export async function POST(request: NextRequest) {
-  const authError = await requireSession();
-  if (authError) return authError;
+  // 鉴权：要求登录，且如果配置了 ADMIN_HERO_IDS 则必须是管理员
+  const authErr = await requireSession();
+  if (authErr) return authErr;
+  if (ADMIN_HERO_IDS.length > 0) {
+    const { cookies } = await import('next/headers');
+    const { getHeroIdFromCookies } = await import('@/lib/auth');
+    const cookieStore = await cookies();
+    const { heroId } = getHeroIdFromCookies(cookieStore);
+    if (!heroId || !ADMIN_HERO_IDS.includes(heroId)) {
+      return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
+    }
+  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;

@@ -6,7 +6,10 @@ import { getHeroIdFromCookies } from '@/lib/auth';
 // 非可加入的活跃状态
 const ACTIVE_STATUSES = [
   'intro', 'round_1', 'round_2', 'round_3', 'round_4', 'round_5',
+  'choosing_1', 'choosing_2', 'choosing_3', 'choosing_4', 'choosing_5',
+  'resolving_1', 'resolving_2', 'resolving_3', 'resolving_4', 'resolving_5',
   'processing_1', 'processing_2', 'processing_3', 'processing_4', 'processing_5',
+  'processing_finals', 'processing_final', 'artifact_selection',
   'semifinals', 'final', 'ending',
 ];
 
@@ -197,7 +200,7 @@ export async function POST(request: NextRequest) {
             charisma: gh.hero?.charisma || 10,
           })) || [];
           const now = new Date().toISOString();
-          await supabaseAdmin.from('game_state').upsert({
+          const { error: gsErr } = await supabaseAdmin.from('game_state').upsert({
             id: 'current',
             game_id: game.id,
             status: 'countdown',
@@ -210,6 +213,7 @@ export async function POST(request: NextRequest) {
             recent_events: [],
             updated_at: now,
           });
+          if (gsErr) console.error('[Join] repair game_state upsert failed:', gsErr.message);
         }
       }
       return NextResponse.json({ gameId: game.id, seat: existing.seat_number, status: 'already_joined' });
@@ -332,7 +336,7 @@ export async function POST(request: NextRequest) {
 
     const newStatus = humanCount >= 1 && game.status === 'waiting' ? 'countdown' : game.status;
     const nowIso = new Date().toISOString();
-    await supabaseAdmin.from('game_state').upsert({
+    const { error: gsErr2 } = await supabaseAdmin.from('game_state').upsert({
       id: 'current',
       game_id: game.id,
       status: newStatus,
@@ -344,6 +348,7 @@ export async function POST(request: NextRequest) {
       recent_events: [],
       updated_at: nowIso,
     });
+    if (gsErr2) console.error('[Join] game_state upsert failed:', gsErr2.message);
 
     return NextResponse.json({
       gameId: game.id,
@@ -353,6 +358,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (err: any) {
     console.error('Join error:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

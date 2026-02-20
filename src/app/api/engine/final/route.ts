@@ -1,25 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { resolveFinalsRound } from '@/lib/game/combat';
-import { finalsPrompt } from '@/lib/game/prompts';
-import { SecondMeClient } from '@/lib/game/secondme-client';
 import { NPC_TEMPLATES } from '@/lib/game/npc-data/templates';
 import { FINALS_ROUNDS, INITIAL_HP } from '@/lib/game/constants';
 import { FinalsMove, GameEvent, ArtifactEffect } from '@/lib/types';
+import { getFinalsMove } from '@/lib/game/finals-engine';
 import { mapGameStateRow } from '@/lib/game/state-mapper';
 import {
   getMoveName, getInnerThought, getReadyNarrative,
   getClashNarrative, getWinTaunt, getLoseReaction,
 } from '@/lib/game/finals-narrative';
-import { requireSession } from '@/lib/auth';
-
+import { requireEngineSecret } from '@/lib/auth';
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {
-    const authError = await requireSession();
-    if (authError) return authError;
-
+    const authErr = requireEngineSecret(request);
+    if (authErr) return authErr;
     const { gameId } = await request.json();
     if (!gameId) return NextResponse.json({ error: 'Missing gameId' }, { status: 400 });
 
@@ -154,6 +151,8 @@ export async function POST(request: NextRequest) {
         hero2Attrs: { strength: f2.strength, wisdom: f2.wisdom, innerForce: f2.inner_force },
         hero1Credit: f1gh.credit || 50,
         hero2Credit: f2gh.credit || 50,
+        hero1Morality: f1gh.morality ?? 50,
+        hero2Morality: f2gh.morality ?? 50,
         hero1Artifacts,
         hero2Artifacts,
       });
@@ -298,7 +297,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await supabaseAdmin.from('game_state').upsert({
+    const { error: gsError } = await supabaseAdmin.from('game_state').upsert({
       id: 'current',
       game_id: gameId,
       status: 'ending',
@@ -309,6 +308,9 @@ export async function POST(request: NextRequest) {
       phase_started_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
+    if (gsError) {
+      console.error('[Final] game_state upsert failed:', gsError.message);
+    }
 
     const { data: freshState } = await supabaseAdmin
       .from('game_state').select('*').eq('id', 'current').single();
@@ -319,79 +321,8 @@ export async function POST(request: NextRequest) {
     });
   } catch (err: any) {
     console.error('Final error:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
-// 获取决赛出招（复用自 finals 的逻辑）
-async function getFinalsMove(gh: any, opponentName: string): Promise<{ move: FinalsMove; taunt: string }> {
-  const hero = gh.hero;
-  const validMoves: FinalsMove[] = ['attack', 'defend', 'ultimate', 'bluff'];
-
-  if (hero.is_npc) {
-    const template = NPC_TEMPLATES.find(t => t.id === hero.npc_template_id);
-    let move: FinalsMove;
-    if (template) {
-      if (template.alwaysFightStrongest) move = 'attack';
-      else if (template.neverFight) move = Math.random() < 0.6 ? 'defend' : 'bluff';
-      else if (template.personalityType === 'aggressive') move = Math.random() < 0.5 ? 'attack' : 'ultimate';
-      else if (template.personalityType === 'cautious') move = Math.random() < 0.5 ? 'defend' : 'attack';
-      else if (template.personalityType === 'cunning') move = Math.random() < 0.4 ? 'bluff' : 'attack';
-      else move = validMoves[Math.floor(Math.random() * validMoves.length)];
-    } else {
-      move = validMoves[Math.floor(Math.random() * validMoves.length)];
-    }
-    const taunt = template?.signatureLines?.[Math.floor(Math.random() * (template?.signatureLines?.length || 1))] || '……';
-    return { move, taunt };
-  }
-
-  // 真人：调 SecondMe
-  try {
-    const client = new SecondMeClient(hero.access_token || '');
-    const prompt = finalsPrompt({
-      heroId: gh.hero_id,
-      heroName: hero.hero_name,
-      faction: hero.faction,
-      personalityType: hero.personality_type,
-      hp: gh.hp,
-      maxHp: INITIAL_HP,
-      seatNumber: gh.seat_number,
-      reputation: gh.reputation || 0,
-      hot: gh.hot || 0,
-      morality: gh.morality || 50,
-      credit: gh.credit || 50,
-      isEliminated: false,
-      allyHeroId: null,
-      allyHeroName: null,
-      martialArts: gh.martial_arts || [],
-      hasDeathPact: gh.has_death_pact || false,
-      isNpc: false,
-      catchphrase: hero.catchphrase || '',
-      avatarUrl: hero.avatar_url,
-      strength: hero.strength,
-      innerForce: hero.inner_force,
-      agility: hero.agility,
-      wisdom: hero.wisdom,
-      constitution: hero.constitution,
-      charisma: hero.charisma,
-    }, opponentName);
-
-    const raw = await client.act(prompt);
-    try {
-      const match = raw.match(/\{[\s\S]*\}/);
-      if (match) {
-        const parsed = JSON.parse(match[0]);
-        if (validMoves.includes(parsed.move)) {
-          return { move: parsed.move, taunt: parsed.taunt || '……' };
-        }
-      }
-    } catch { /* fallback */ }
-    const moveMatch = raw.match(/"move"\s*:\s*"(\w+)"/);
-    if (moveMatch && validMoves.includes(moveMatch[1] as FinalsMove)) {
-      const tauntMatch = raw.match(/"taunt"\s*:\s*"([^"]+)"/);
-      return { move: moveMatch[1] as FinalsMove, taunt: tauntMatch?.[1] || '……' };
-    }
-  } catch { /* fallback */ }
-
-  return { move: validMoves[Math.floor(Math.random() * validMoves.length)], taunt: '……' };
-}
+// getFinalsMove 已提取到 @/lib/game/finals-engine.ts

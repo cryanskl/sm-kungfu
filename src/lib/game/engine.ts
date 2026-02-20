@@ -314,14 +314,22 @@ export async function processRound(gameId: string, roundNumber: number): Promise
     hero_choice_status: {},
   }).eq('id', 'current');
 
-  // 3.5 即时成就评估（不写 DB，仅用于前端 toast 展示）
+  // 3.5 Re-fetch game_heroes ONCE after resolveRound (for achievements + cache)
+  const { data: freshGameHeroes } = await supabaseAdmin
+    .from('game_heroes')
+    .select('*, hero:heroes(*)')
+    .eq('game_id', gameId)
+    .order('seat_number');
+  const finalSnapshots = gameHeroesToSnapshots(freshGameHeroes || gameHeroes);
+
+  // 即时成就评估（不写 DB，仅用于前端 toast 展示）
   let roundAchievements: any[] = [];
   let updatedAwarded: string[] = [];
   try {
-    // 获取本局全部事件（需要跨回合判定，如 first_blood）
+    // 获取本局全部事件（仅拉取成就评估所需列）
     const { data: allGameEvents } = await supabaseAdmin
       .from('game_events')
-      .select('*')
+      .select('hero_id, target_hero_id, event_type, round, sequence, data')
       .eq('game_id', gameId)
       .order('round', { ascending: true })
       .order('sequence', { ascending: true });
@@ -333,13 +341,6 @@ export async function processRound(gameId: string, roundNumber: number): Promise
       .eq('id', 'current')
       .single();
     const prevAwarded: string[] = gsAchievements?.awarded_achievements || [];
-
-    // Re-fetch game_heroes with fresh HP/elimination state after resolveRound writes
-    const { data: freshGameHeroes } = await supabaseAdmin
-      .from('game_heroes')
-      .select('*, hero:heroes(*)')
-      .eq('game_id', gameId)
-      .order('seat_number');
 
     roundAchievements = evaluateInstantAchievementsInMemory(
       freshGameHeroes || gameHeroes,
@@ -362,8 +363,7 @@ export async function processRound(gameId: string, roundNumber: number): Promise
     .update({ status: nextStatus, current_round: roundNumber })
     .eq('id', gameId);
 
-  // 5. 更新 game_state 缓存（使用 nextStatus 保持一致）
-  const finalSnapshots = await getHeroSnapshots(gameId);
+  // 5. 更新 game_state 缓存（使用 nextStatus 保持一致，复用已查询的 finalSnapshots）
   await updateGameStateCache(gameId, roundNumber, events, finalSnapshots, nextStatus, roundAchievements, updatedAwarded);
 
   console.log(`[Engine] ✓ round=${roundNumber} done in ${Date.now()-t0}ms, ${events.length} events, next=${nextStatus}`);
@@ -1360,7 +1360,7 @@ async function updateGameStateCache(
     updated_at: new Date().toISOString(),
   };
 
-  // 成就实时弹窗数据
+  // 成就实时弹窗数据（列可能尚未通过迁移添加）
   if (roundAchievements !== undefined) {
     upsertData.round_achievements = roundAchievements;
   }
@@ -1368,5 +1368,14 @@ async function updateGameStateCache(
     upsertData.awarded_achievements = awardedAchievements;
   }
 
-  await supabaseAdmin.from('game_state').upsert(upsertData);
+  const { error: upsertError } = await supabaseAdmin.from('game_state').upsert(upsertData);
+  if (upsertError) {
+    console.warn('[Engine] game_state upsert failed, retrying without achievement cols:', upsertError.message);
+    delete upsertData.round_achievements;
+    delete upsertData.awarded_achievements;
+    const { error: retryError } = await supabaseAdmin.from('game_state').upsert(upsertData);
+    if (retryError) {
+      console.error('[Engine] game_state upsert retry also failed:', retryError.message);
+    }
+  }
 }

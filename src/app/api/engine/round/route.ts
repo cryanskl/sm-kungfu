@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processRound } from '@/lib/game/engine';
 import { supabaseAdmin } from '@/lib/supabase';
 import { mapGameStateRow } from '@/lib/game/state-mapper';
-import { requireSession } from '@/lib/auth';
+import { requireEngineSecret } from '@/lib/auth';
 
 export const maxDuration = 60; // Vercel Pro: 60s 超时
 
@@ -11,12 +11,18 @@ const recentCalls = new Map<string, number>();
 
 export async function POST(request: NextRequest) {
   try {
-    const authError = await requireSession();
-    if (authError) return authError;
+    const authErr = requireEngineSecret(request);
+    if (authErr) return authErr;
     const { gameId, roundNumber } = await request.json();
 
     if (!gameId || !roundNumber || roundNumber < 1 || roundNumber > 6) {
       return NextResponse.json({ error: 'Invalid params' }, { status: 400 });
+    }
+
+    // 验证 gameId 是当前活跃的游戏
+    const { data: gs } = await supabaseAdmin.from('game_state').select('game_id').eq('id', 'current').single();
+    if (gs?.game_id && gs.game_id !== gameId) {
+      return NextResponse.json({ error: 'Game mismatch' }, { status: 400 });
     }
 
     // 节流检查：5秒内重复调用直接返回缓存
@@ -54,6 +60,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (err: any) {
     console.error('Engine round error:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
