@@ -105,7 +105,7 @@ export function RankingPanel({ title, icon, entries, highlight }: {
           );
         })}
         {entries.length === 0 && (
-          <div className="text-center text-[--text-dim] text-sm py-6 font-display">暂无数据</div>
+          <div className="text-center text-[--text-dim] text-xs py-3 font-display">暂无数据</div>
         )}
       </div>
     </div>

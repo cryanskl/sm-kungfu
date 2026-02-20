@@ -5,6 +5,17 @@ import type { GameState, EncounterChoice } from '@/lib/types';
 import { MidGameBetBar } from '@/components/game/MidGameBetBar';
 import PredictionBar from '@/components/game/PredictionBar';
 
+const CATEGORY_COLORS: Record<string, string> = {
+  '天灾': 'bg-vermillion/15 text-vermillion border-vermillion/20',
+  '奇遇': 'bg-jade/15 text-jade border-jade/20',
+  '宝物': 'bg-gold/15 text-gold border-gold/20',
+  '机缘': 'bg-[--accent-blue]/15 text-[--accent-blue] border-[--accent-blue]/20',
+  '江湖逸事': 'bg-[--accent-purple]/15 text-[--accent-purple] border-[--accent-purple]/20',
+  '医术': 'bg-jade/15 text-jade border-jade/20',
+  '酒馆': 'bg-gold/15 text-gold border-gold/20',
+  'NPC遭遇': 'bg-[--accent-blue]/15 text-[--accent-blue] border-[--accent-blue]/20',
+};
+
 interface ChoosingPanelProps {
   gameState: GameState;
   onSubmit: (encounterIds: string[]) => void;
@@ -105,14 +116,14 @@ export function ChoosingPanel({ gameState, onSubmit, isSubmitted }: ChoosingPane
                 <button
                   key={enc.id}
                   onClick={() => toggle(enc.id)}
-                  className={`p-3 rounded-lg border text-left transition-all ${
+                  className={`p-3 rounded-lg border text-left transition-all duration-200 ${
                     isSelected
-                      ? 'border-gold/50 bg-gold/10 shadow-gold-glow'
-                      : 'border-ink-light/20 bg-ink-dark/30 hover:border-ink-light/40'
+                      ? 'border-gold/50 bg-gold/10 shadow-gold-glow scale-[1.01]'
+                      : 'border-ink-light/20 bg-ink-dark/30 hover:border-gold/30 hover:bg-ink-dark/60 hover:shadow-[0_0_8px_rgba(201,168,76,0.1)] hover:scale-[1.01] active:scale-[0.99]'
                   }`}
                 >
                   <div className="flex items-start justify-between mb-1">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${isSelected ? 'bg-gold/20 text-gold' : 'bg-ink-light/10 text-[--text-dim]'}`}>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${isSelected ? 'bg-gold/20 text-gold border-gold/30' : (CATEGORY_COLORS[enc.category] || 'bg-ink-light/10 text-[--text-dim] border-ink-light/15')}`}>
                       {enc.category}
                     </span>
                     {isSelected && <span className="text-gold text-xs">✓</span>}

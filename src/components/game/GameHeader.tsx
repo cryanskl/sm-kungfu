@@ -52,16 +52,16 @@ export function GameHeader({
       <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
         {/* Left: Logo */}
         <div className="flex items-center gap-3">
-          <h1 className="font-display text-xl font-bold text-gold tracking-wider">
+          <h1 className="font-display text-xl sm:text-lg font-bold text-gold tracking-wider whitespace-nowrap">
             ⚔️ AI 武林大会
           </h1>
           {gameState?.theme && (
-            <span className="text-xs px-2 py-0.5 rounded-md bg-gold/8 text-gold/80 border border-gold/15 hidden xs:inline">
+            <span className="text-xs px-2 py-0.5 rounded-md bg-gold/8 text-gold/80 border border-gold/15 hidden lg:inline">
               「{gameState.theme}」
             </span>
           )}
-          <span className="hidden sm:block"><HeroLeaderboard /></span>
-          <span className="hidden sm:block"><RichLeaderboard /></span>
+          <span className="hidden lg:block"><HeroLeaderboard /></span>
+          <span className="hidden lg:block"><RichLeaderboard /></span>
         </div>
 
         {/* Center: Round info */}
@@ -167,6 +167,12 @@ export function GameHeader({
                         <span className="text-[--text-dim]">赛季积分</span>
                         <span className="text-gold tabular-nums">{user.hero?.seasonPoints ?? 0}</span>
                       </div>
+                    </div>
+                    <div className="border-t border-gold/10">
+                      <a href="/achievements"
+                        className="block w-full text-center py-3 text-sm text-gold hover:bg-gold/8 transition">
+                        🏅 成就录
+                      </a>
                     </div>
                     <div className="border-t border-gold/10">
                       <a href="/api/auth/logout"

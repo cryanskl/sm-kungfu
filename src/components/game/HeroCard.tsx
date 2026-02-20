@@ -104,9 +104,12 @@ export const HeroCard = memo(function HeroCard({ hero, compact = false, rank }: 
             {hero.hasDeathPact && <span className="text-[10px] opacity-70">📜</span>}
             {hero.allyHeroId && <span className="text-[10px] opacity-70">🤝</span>}
           </div>
-          <div className="w-full h-1.5 bg-ink-medium rounded-full mt-1 overflow-hidden">
+          <div className="relative w-full h-2 bg-ink-medium rounded-full mt-1 overflow-hidden">
             <div className={`h-full rounded-full hp-bar ${hpColor} ${hpGlow} ${hpPercent < 30 ? 'hp-low' : ''}`}
                  style={{ width: `${hpPercent}%` }} />
+            <span className="absolute inset-0 flex items-center justify-center text-[8px] font-mono text-white/60 leading-none">
+              {hero.hp}
+            </span>
           </div>
         </div>
         <div className="text-right text-[11px] flex-shrink-0 space-y-0.5 tabular-nums">

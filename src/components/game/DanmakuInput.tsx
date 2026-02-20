@@ -90,7 +90,7 @@ export function DanmakuInput() {
   return (
     <div className="flex flex-col items-center gap-2 max-w-lg mx-auto">
       {/* 弹幕天意进度条（始终显示已有进度+最热效果） */}
-      <div className="flex flex-wrap gap-1.5 justify-center">
+      <div className="flex gap-1.5 justify-center overflow-x-auto scrollbar-hide pb-1">
         {INFLUENCE_DISPLAY
           .map(eff => ({ ...eff, count: influence?.counters?.[eff.id] || 0 }))
           .sort((a, b) => b.count - a.count)
@@ -104,7 +104,7 @@ export function DanmakuInput() {
             // 高阈值效果：用进度条样式替代纯数字pill
             if (isHighThreshold && eff.count > 0) {
               return (
-                <span key={eff.id} className={`relative text-[10px] px-2 py-0.5 rounded-full border overflow-hidden
+                <span key={eff.id} className={`relative text-[10px] px-2 py-0.5 rounded-full border overflow-hidden flex-shrink-0
                   ${full ? 'border-gold/60 bg-gold/15 text-gold animate-pulse'
                     : nearThreshold ? 'border-gold/50 text-gold shadow-gold-glow'
                     : 'border-ink-light/30 text-[--text-secondary]'}`}>
@@ -120,10 +120,10 @@ export function DanmakuInput() {
             }
 
             return (
-              <span key={eff.id} className={`relative text-[10px] px-2 py-0.5 rounded-full border overflow-hidden
+              <span key={eff.id} className={`relative text-[10px] px-2 py-0.5 rounded-full border overflow-hidden flex-shrink-0
                 ${full ? 'border-gold/60 bg-gold/15 text-gold animate-pulse'
                   : eff.count > 0 ? 'border-ink-light/30 text-[--text-secondary]'
-                  : 'border-ink-light/10 text-[--text-dim]/50'}`}>
+                  : 'border-ink-light/10 text-[--text-dim]/30'}`}>
                 {eff.count > 0 && !full && (
                   <span className="absolute inset-0 bg-gold/8 rounded-full" style={{ width: `${pct}%` }} />
                 )}
@@ -203,13 +203,13 @@ export function DanmakuInput() {
       </div>
 
       {/* 提示词快捷按钮 */}
-      <div className="flex flex-wrap gap-1.5 justify-center">
+      <div className="flex gap-1.5 overflow-x-auto scrollbar-hide pb-0.5">
         <span className="text-[10px] text-[--text-dim]/50">试试：</span>
         {hints.map(h => (
           <button
             key={h.text}
             onClick={() => { setText(h.text); inputRef.current?.focus(); }}
-            className={`text-[10px] px-1.5 py-0.5 rounded border transition-all
+            className={`text-[10px] px-2 py-1 sm:px-1.5 sm:py-0.5 rounded border transition-all whitespace-nowrap flex-shrink-0
               ${h.influence
                 ? 'border-gold/20 text-gold/70 hover:bg-gold/10 hover:border-gold/40'
                 : 'border-ink-light/15 text-[--text-dim]/60 hover:bg-ink-dark/60 hover:text-[--text-dim]'}`}

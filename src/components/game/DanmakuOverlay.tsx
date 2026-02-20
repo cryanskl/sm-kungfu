@@ -15,6 +15,9 @@ const COLOR_MAP: Record<string, string> = {
   gold: '#c9a84c',
   cyan: '#5dade2',
   red: '#e74c3c',
+  green: '#2d9b6f',
+  purple: '#8e6aad',
+  pink: '#e08080',
 };
 
 export function DanmakuOverlay() {

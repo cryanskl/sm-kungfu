@@ -53,13 +53,13 @@ export default function PredictionBar() {
           </span>
         </div>
       ) : (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex gap-1.5 overflow-x-auto scrollbar-hide pb-1">
           {alive.map(h => (
             <button
               key={h.heroId}
               onClick={() => handlePredict(h.heroId)}
               disabled={loading || (mode === 'elimination' && h.heroId === myHeroId)}
-              className={`px-2 py-1 text-xs rounded border transition-all ${
+              className={`px-2.5 py-1.5 text-xs rounded border transition-all whitespace-nowrap flex-shrink-0 ${
                 h.heroId === selectedHeroId
                   ? `${badgeColor}`
                   : 'border-ink-light/20 text-ink-light hover:border-ink-light/40'

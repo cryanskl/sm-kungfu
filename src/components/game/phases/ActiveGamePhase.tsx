@@ -61,16 +61,16 @@ export function ActiveGamePhase({
   );
 
   return (
-    <div className="grid grid-cols-12 gap-4 lg:gap-6 phase-enter">
+    <div className="grid grid-cols-12 gap-3 md:gap-4 lg:gap-6 phase-enter">
       {/* Mobile-only compact HP strip */}
-      <div className="col-span-12 lg:hidden order-0 flex flex-wrap gap-1.5 px-1">
+      <div className="col-span-12 lg:hidden order-0 flex gap-2 px-1 overflow-x-auto scrollbar-hide pb-1">
         {sortedAlive.map(h => {
           const hpPct = Math.max(0, (h.hp || 0) / (h.maxHp || 100) * 100);
           const isMe = h.heroId === myHeroId;
           return (
-            <div key={h.heroId} className={`flex items-center gap-1 text-[10px] ${isMe ? 'text-gold' : 'text-[--text-dim]'}`}>
-              <span className="truncate max-w-[3rem]">{h.heroName.slice(0, 2)}</span>
-              <div className="w-8 h-1.5 bg-ink-light/20 rounded-full overflow-hidden">
+            <div key={h.heroId} className={`flex items-center gap-1 text-[11px] flex-shrink-0 ${isMe ? 'text-gold' : 'text-[--text-dim]'}`}>
+              <span className="truncate max-w-[3.5rem]">{h.heroName.slice(0, 3)}</span>
+              <div className="w-10 h-2 bg-ink-light/20 rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all ${hpPct > 50 ? 'bg-jade' : hpPct > 25 ? 'bg-gold' : 'bg-vermillion'}`}
                   style={{ width: `${hpPct}%` }}
@@ -82,7 +82,7 @@ export function ActiveGamePhase({
       </div>
 
       {/* Left: Heroes — last on mobile */}
-      <div className="col-span-12 lg:col-span-3 order-3 lg:order-1 flex flex-col">
+      <div className="col-span-12 md:col-span-5 lg:col-span-3 order-3 md:order-1 flex flex-col">
         <RelationshipGraph />
         <h3 className="font-display font-bold text-sm text-[--text-dim] mb-2 mt-4 tracking-wider">
           ⚔️ 侠客 <span className="text-gold tabular-nums">({aliveCount}存活)</span>
@@ -103,7 +103,7 @@ export function ActiveGamePhase({
       </div>
 
       {/* Center: Event Feed — first on mobile */}
-      <div className="col-span-12 lg:col-span-5 order-1 lg:order-2 flex flex-col">
+      <div className="col-span-12 md:col-span-7 lg:col-span-5 order-1 md:order-2 flex flex-col">
         {/* 旁观模式横幅 */}
         {isSpectator && (
           <div className="text-center text-xs text-[--text-dim] bg-ink-deep/60 border border-ink-light/20 rounded px-3 py-1.5 mb-2">
@@ -111,12 +111,12 @@ export function ActiveGamePhase({
           </div>
         )}
         {/* P1: 视角切换栏 */}
-        <div className="flex items-center gap-1.5 mb-3 px-1 flex-wrap">
+        <div className="flex items-center gap-2 sm:gap-1.5 mb-3 px-1 overflow-x-auto scrollbar-hide flex-nowrap lg:flex-wrap">
           <span className="text-[10px] text-[--text-dim] mr-1">视角:</span>
           {/* 自己视角（旁观者显示全局视角） */}
           <button
             onClick={() => setViewingHero(null)}
-            className={`w-6 h-6 rounded-full border-2 transition-all text-[10px] flex items-center justify-center
+            className={`w-8 h-8 sm:w-7 sm:h-7 lg:w-6 lg:h-6 rounded-full border-2 transition-all text-xs sm:text-[11px] lg:text-[10px] flex items-center justify-center flex-shrink-0
               ${!viewingHeroId ? 'border-gold bg-gold/20 text-gold shadow-gold-glow' : 'border-ink-light/30 text-[--text-dim] hover:border-ink-light/60'}`}
             title={isSpectator ? '全局视角' : '我的视角'}
           >
@@ -131,7 +131,7 @@ export function ActiveGamePhase({
                 key={hero.heroId}
                 onClick={() => canSwitch && setViewingHero(hero.heroId)}
                 disabled={!canSwitch}
-                className={`w-6 h-6 rounded-full border-2 transition-all text-[10px] flex items-center justify-center
+                className={`w-8 h-8 sm:w-7 sm:h-7 lg:w-6 lg:h-6 rounded-full border-2 transition-all text-xs sm:text-[11px] lg:text-[10px] flex items-center justify-center flex-shrink-0
                   ${isActive ? 'border-gold bg-gold/20 text-gold shadow-gold-glow' : ''}
                   ${!isActive && canSwitch ? 'border-ink-light/30 text-[--text-dim] hover:border-ink-light/60' : ''}
                   ${!canSwitch ? 'border-ink-light/10 text-ink-light/20 cursor-not-allowed' : 'cursor-pointer'}`}
@@ -221,7 +221,7 @@ export function ActiveGamePhase({
       </div>
 
       {/* Right: Rankings */}
-      <div className="col-span-12 lg:col-span-4 order-2 lg:order-3 flex flex-col gap-4">
+      <div className="col-span-12 lg:col-span-4 order-2 md:order-3 flex flex-col gap-4 md:flex-row lg:flex-col">
         <div className="flex-1 min-h-0">
           <RankingPanel title="声望榜" icon="⚔️" entries={repRanking} highlight={status === 'semifinals' ? 4 : 3} />
         </div>

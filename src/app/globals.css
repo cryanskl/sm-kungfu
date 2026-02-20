@@ -99,6 +99,15 @@ body > * {
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--gold-bright); }
 
+/* Hide scrollbar for horizontal scroll containers */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
 /* ═══════ Typography ═══════ */
 
 .font-display {
@@ -565,15 +574,18 @@ body > * {
 /* ═══════ RANK MEDAL BADGES ═══════ */
 
 .rank-1 {
-  background: linear-gradient(135deg, rgba(201, 168, 76, 0.15) 0%, transparent 100%);
+  background: linear-gradient(135deg, rgba(201, 168, 76, 0.15) 0%, rgba(201, 168, 76, 0.04) 100%);
+  border: 1px solid rgba(201, 168, 76, 0.2);
   border-left: 3px solid var(--gold);
 }
 .rank-2 {
-  background: linear-gradient(135deg, rgba(180, 180, 190, 0.08) 0%, transparent 100%);
+  background: linear-gradient(135deg, rgba(192, 192, 192, 0.08) 0%, rgba(192, 192, 192, 0.02) 100%);
+  border: 1px solid rgba(192, 192, 192, 0.12);
   border-left: 3px solid #a0a0a8;
 }
 .rank-3 {
-  background: linear-gradient(135deg, rgba(180, 120, 60, 0.08) 0%, transparent 100%);
+  background: linear-gradient(135deg, rgba(205, 127, 50, 0.08) 0%, rgba(205, 127, 50, 0.02) 100%);
+  border: 1px solid rgba(205, 127, 50, 0.12);
   border-left: 3px solid #b47840;
 }
 
