@@ -592,7 +592,7 @@ export async function POST(request: NextRequest) {
 
     const championGh = gameHeroes.find((g: any) => g.hero_id === game.champion_hero_id);
 
-    await supabaseAdmin.from('game_state').upsert({
+    const endUpsertData: Record<string, any> = {
       id: 'current',
       game_id: gameId,
       status: 'ended',
@@ -610,7 +610,32 @@ export async function POST(request: NextRequest) {
       prediction_results: predictionResults,
       phase_started_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    });
+    };
+
+    const { error: endUpsertErr } = await supabaseAdmin.from('game_state').upsert(endUpsertData);
+    if (endUpsertErr) {
+      console.warn('[EndGame] game_state upsert failed, retrying without optional cols:', endUpsertErr.message);
+      // Drop columns most likely to be missing from DB schema
+      delete endUpsertData.bet_winners;
+      delete endUpsertData.balance_ranking;
+      delete endUpsertData.prediction_results;
+      const { error: retryErr } = await supabaseAdmin.from('game_state').upsert(endUpsertData);
+      if (retryErr) {
+        console.warn('[EndGame] retry without optional cols failed, falling back to essential fields:', retryErr.message);
+        // Last resort: only write status + core fields so the game doesn't get stuck
+        await supabaseAdmin.from('game_state').upsert({
+          id: 'current',
+          game_id: gameId,
+          status: 'ended',
+          phase: 'ending',
+          champion_name: endUpsertData.champion_name,
+          recent_events: titleEvents,
+          battle_stats: battleStats,
+          phase_started_at: endUpsertData.phase_started_at,
+          updated_at: endUpsertData.updated_at,
+        });
+      }
+    }
 
     // Reset influence_used for all participants
     const endGameHeroIds = gameHeroes.map((gh: any) => gh.hero_id);

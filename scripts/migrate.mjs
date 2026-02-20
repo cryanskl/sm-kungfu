@@ -84,6 +84,8 @@ const MIGRATION_SQL = [
   `ALTER TABLE heroes ADD COLUMN IF NOT EXISTS influence_used BOOLEAN DEFAULT false`,
   // 武林周刊战报数据 + 崩溃恢复时间戳
   `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS battle_stats JSONB DEFAULT '{}'`,
+  `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS bet_winners JSONB DEFAULT '[]'`,
+  `ALTER TABLE game_state ADD COLUMN IF NOT EXISTS balance_ranking JSONB DEFAULT '[]'`,
   `ALTER TABLE games ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
   // increment_influence RPC 函数（原子化弹幕天意计数器）
   `CREATE OR REPLACE FUNCTION increment_influence(
