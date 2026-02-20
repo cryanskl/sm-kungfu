@@ -10,27 +10,22 @@ export const INITIAL_HP = 80;
 export const INITIAL_MORALITY = 50;
 export const INITIAL_CREDIT = 50;
 export const MAX_SEATS = 12;
-export const TOTAL_ROUNDS = 6;
 export const COUNTDOWN_SECONDS = 30;
 
 // --- 时间（秒）---
-export const INTRO_DURATION = 25;
-export const ROUND_DURATION = 30;
-export const ENDING_DURATION = 25;
-export const BETWEEN_GAMES_DURATION = 30;
+export const INTRO_DURATION = 15;
 
 // --- 战斗 ---
 export const MIN_DAMAGE = 8;
 export const ULTIMATE_MULTIPLIER = 1.8;
-export const DEATH_PACT_MULTIPLIER = 2.0;
+export const DEATH_PACT_MULTIPLIER = 1.6;
 export const GANG_UP_DEFENSE_BONUS = 1.4;
 export const WANTED_DEFENSE_BONUS = 1.5;
-export const WANTED_COUNTER_BONUS = 1.3;
 export const REVENGE_DAMAGE_BONUS = 1.5;
 export const COUNTER_BASE_CHANCE = 0.2;
 
 // --- 回复 ---
-export const TRAIN_HP_RECOVERY = 5;
+export const TRAIN_HP_RECOVERY = 3;
 export const REST_HP_RECOVERY = 12;
 
 // --- 声望 ---
@@ -69,16 +64,10 @@ export const R1_SCRAMBLE_LOSE_HP = 10;
 export const R1_SCRAMBLE_LOSE_REP = 10;
 export const R1_FALLBACK_ATTACK_BONUS = 4;  // 保底弱化版
 
-// --- R2 方丈收徒 ---
-export const R2_MASTER_ATTR_BONUS = 3;
-
 // --- R3 背叛 ---
 export const R3_BETRAY_RESOURCE_STEAL = 0.3;
 export const R3_BETRAY_MORALITY_COST = 20;
 export const R3_BETRAY_CREDIT_COST = 30;
-
-// --- R5 生死状 ---
-export const R5_SKIP_REP_PENALTY = 5;
 
 // --- 神兵助战 ---
 export const ARTIFACT_SELECTION_DURATION = 10;
@@ -120,8 +109,7 @@ export const ENCOUNTERS_PER_HERO = 2;
 export const VIEW_SWITCH_COOLDOWN = 500;  // 视角切换防抖 500ms
 
 // --- P5: 交互式回合选择 ---
-export const CHOOSING_DURATION = 15;       // 选择阶段秒数
-export const CHOOSING_TIMEOUT = 20;        // 超时强制 AI 兜底秒数
+export const CHOOSING_DURATION = 22;       // 选择阶段秒数
 export const CANDIDATES_PER_HERO = 6;      // 每轮候选奇遇数量
 export const CHOICES_PER_HERO = 2;         // 玩家必须选择的奇遇数量
 export const INFLUENCE_BUFF_AMOUNT = 10;   // 定向增益数值
@@ -133,13 +121,8 @@ export const FINALS_TOP_HOT = 2;
 export const FINALS_ROUNDS = 3;
 export const BLUFF_BASE_CHANCE = 0.3;
 export const BLUFF_WISDOM_FACTOR = 0.01;
-export const BLUFF_CREDIT_FACTOR = 0.005;
+export const BLUFF_CREDIT_FACTOR = 0.008;
 export const FINALS_CLASH_DAMAGE = 30;  // 绝招对绝招
-
-// --- 属性映射 ---
-export const BASE_ATTRIBUTE = 15;
-export const MAX_PERSONALITY_BONUS = 20;
-export const TOTAL_ATTRIBUTE_BUDGET = 110;  // 总属性点约 110-140
 
 // --- 门派属性加成 ---
 export const FACTION_BONUSES: Record<string, Partial<Record<string, number>>> = {
@@ -165,6 +148,27 @@ export const GAME_THEMES = [
   '残阳如血', '夺命十三剑', '最后的江湖', '天命难违',
   '剑胆琴心', '大漠孤烟', '水月洞天', '鬼谷迷踪',
 ];
+
+// --- 功能1: 中场加注上限 ---
+export const MID_GAME_BET_LIMITS: Record<string, number> = {
+  intro: 1000,
+  choosing_1: 500, choosing_2: 400, choosing_3: 300, choosing_4: 200, choosing_5: 100,
+  semifinals: 500,
+};
+export const MID_GAME_BET_AMOUNTS = [100, 200, 500] as const;
+
+// --- 功能2: 预测奖励 ---
+export const PREDICTION_REWARDS = {
+  ELIMINATION_CORRECT: 50,
+  CHAMPION_BY_ROUND: { 1: 300, 2: 250, 3: 200, 4: 150, 5: 100 } as Record<number, number>,
+  CHAMPION_LATE: 80,
+};
+
+// --- 功能3: 高阈值弹幕效果阈值 ---
+export const DIVINE_WEAPON_THRESHOLD = 15;
+export const MYSTERIOUS_NPC_THRESHOLD = 20;
+export const MASS_HEAL_THRESHOLD = 12;
+export const MASS_HEAL_AMOUNT = 20;
 
 // --- 开战倒计时古诗词（每5秒轮换） ---
 export const COUNTDOWN_POEMS = [

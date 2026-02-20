@@ -35,6 +35,13 @@ export function mapGameStateRow(data: any): GameState {
     choosingDeadline: data.choosing_deadline || null,
     heroChoiceStatus: data.hero_choice_status || {},
     pendingInfluences: data.pending_influences || [],
+    // 功能2: 观众预测
+    predictions: data.predictions || null,
+    predictionResults: data.prediction_results || null,
+    // 功能4: 成就实时弹窗
+    roundAchievements: data.round_achievements || [],
+    achievementProgress: data.achievement_progress || null,
+    awardedAchievements: data.awarded_achievements || [],
     queueCount: data.queue_count || 0,
     // 服务器权威时间（由 state route 填充）
     serverTime: '',

@@ -91,13 +91,16 @@ export interface MartialArt {
 export type GameStatus =
   | 'waiting'     // 等待入场
   | 'countdown'   // 30 秒倒计时
+  | 'starting'    // 初始化中
   | 'intro'       // 开场点名
   | 'choosing_1' | 'choosing_2' | 'choosing_3' | 'choosing_4' | 'choosing_5'
   | 'resolving_1' | 'resolving_2' | 'resolving_3' | 'resolving_4' | 'resolving_5'
-  | 'round_1' | 'round_2' | 'round_3' | 'round_4' | 'round_5' | 'round_6'
+  | 'round_1' | 'round_2' | 'round_3' | 'round_4' | 'round_5'
   | 'semifinals'  // 半决赛
+  | 'processing_finals' // 半决赛处理中
   | 'artifact_selection' // 神兵助战（10秒观众投注）
   | 'final'       // 决赛
+  | 'processing_final'  // 决赛处理中
   | 'ending'      // 封神榜
   | 'ended';      // 已结束
 
@@ -229,6 +232,21 @@ export interface GameState {
   choosingDeadline: string | null;
   heroChoiceStatus: Record<string, 'pending' | 'chosen'>;
   pendingInfluences: PendingInfluence[];
+
+  // 功能2: 观众预测
+  predictions: {
+    elimination: Record<string, string>;  // audienceId -> heroId
+    champion: Record<string, string>;
+  } | null;
+  predictionResults: {
+    correctElimination: number;
+    correctChampion: string[];
+  } | null;
+
+  // 功能4: 成就实时弹窗
+  roundAchievements: AchievementUnlock[];
+  achievementProgress: Record<string, { achievementId: string; current: number; target: number }[]> | null;
+  awardedAchievements: string[];
 
   // 候补队列
   queueCount: number;
@@ -448,6 +466,12 @@ export interface AudienceInfluence {
   heroTargets: Record<string, Record<string, number>>;
   lastResetRound: number;
   activeEffects: string[];
+  lastTrigger: {
+    effectType: string;
+    triggeredBy: string;
+    triggeredByName: string;
+    timestamp: number;
+  } | null;
 }
 
 // --- P2: 成就系统 ---
