@@ -54,9 +54,16 @@ export function EventFeed({ events, highlightLatest, activeReveal, highlightHero
   const prevEventsLenRef = useRef(0);
 
   useEffect(() => {
+    // 回合切换时事件清空，重置 ref 以便下一批事件能触发动画
+    if (events.length === 0) {
+      prevEventsLenRef.current = 0;
+      setHasAnimated(false);
+      return;
+    }
     if (!highlightLatest && events.length > 0 && prevEventsLenRef.current === 0) {
       setHasAnimated(false);
       const timer = setTimeout(() => setHasAnimated(true), events.length * 100 + 500);
+      prevEventsLenRef.current = events.length;
       return () => clearTimeout(timer);
     }
     prevEventsLenRef.current = events.length;
@@ -70,6 +77,13 @@ export function EventFeed({ events, highlightLatest, activeReveal, highlightHero
 
   // 过滤掉 decision 类型事件（纯宣言，已在其他事件中体现）
   const filtered = useMemo(() => events.filter(e => e.eventType !== 'decision'), [events]);
+
+  // Static mode: priority-grouped layout (memoized; must be before early returns to satisfy hooks rules)
+  const { lowEvents, midEvents, highEvents } = useMemo(() => ({
+    lowEvents: filtered.filter(e => (e.priority || 1) <= 2 && e.eventType !== 'director_event'),
+    midEvents: filtered.filter(e => (e.priority || 1) > 2 && (e.priority || 1) <= 4),
+    highEvents: filtered.filter(e => (e.priority || 1) > 4 || e.eventType === 'director_event'),
+  }), [filtered]);
 
   if (!filtered || filtered.length === 0) {
     return (
@@ -89,7 +103,7 @@ export function EventFeed({ events, highlightLatest, activeReveal, highlightHero
           const isHeroEvent = highlightHeroId && (event.heroId === highlightHeroId || event.targetHeroId === highlightHeroId);
           return (
             <div
-              key={`c-${i}`}
+              key={event.id || stableKey(event, i)}
               ref={isLast ? lastEventRef : undefined}
               className={`p-3 rounded-lg animate-fade-in-up ${getEventBg(event)} ${
                 isLast && activeReveal ? 'reveal-pulse ring-1 ring-gold/40' : ''
@@ -115,13 +129,6 @@ export function EventFeed({ events, highlightLatest, activeReveal, highlightHero
       </div>
     );
   }
-
-  // Static mode: priority-grouped layout (memoized to avoid 3 re-filters per render)
-  const { lowEvents, midEvents, highEvents } = useMemo(() => ({
-    lowEvents: filtered.filter(e => (e.priority || 1) <= 2 && e.eventType !== 'director_event'),
-    midEvents: filtered.filter(e => (e.priority || 1) > 2 && (e.priority || 1) <= 4),
-    highEvents: filtered.filter(e => (e.priority || 1) > 4 || e.eventType === 'director_event'),
-  }), [filtered]);
 
   const shouldAnimate = !hasAnimated;
 

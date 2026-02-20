@@ -94,6 +94,10 @@ export const useWulinStore = create<WulinStore>((set, get) => ({
       updates.chosenEncounterIds = [];
       updates.influenceUsed = false;
     }
+    // 新游戏开始时重置 ETag，避免跨游戏 stale 304
+    if (prev?.gameId && gameState.gameId !== prev.gameId) {
+      lastEtag = null;
+    }
     set(updates as any);
   },
 

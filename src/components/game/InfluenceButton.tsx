@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 interface InfluenceButtonProps {
   targetHeroId: string;
@@ -12,6 +12,17 @@ interface InfluenceButtonProps {
 export function InfluenceButton({ targetHeroId, targetHeroName, influenceUsed, onInfluence }: InfluenceButtonProps) {
   const [showPanel, setShowPanel] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Click outside to close
+  useEffect(() => {
+    if (!showPanel) return;
+    function handleClick(e: MouseEvent) {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) setShowPanel(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showPanel]);
 
   if (influenceUsed) {
     return (
@@ -34,7 +45,7 @@ export function InfluenceButton({ targetHeroId, targetHeroName, influenceUsed, o
   };
 
   return (
-    <div className="relative">
+    <div className="relative" ref={panelRef}>
       <button
         onClick={() => setShowPanel(!showPanel)}
         className="px-2 py-1.5 text-xs rounded-lg border border-gold/30 text-gold hover:bg-gold/10 transition-all"

@@ -108,20 +108,20 @@ export async function POST(request: NextRequest) {
       data: { finalists: finalistsList.map((gh: any) => gh.hero_id) },
     } as any);
 
-    // === 半决赛：交叉对阵 ===
+    // === 半决赛：交叉对阵（并行处理两场） ===
     const matchups = finalistsList.length >= 4
       ? [[finalistsList[0], finalistsList[3]], [finalistsList[1], finalistsList[2]]]
       : [[finalistsList[0], finalistsList[1]]];
 
-    const winners: any[] = [];
-
-    for (const [hero1gh, hero2gh] of matchups) {
+    // 独立处理一场半决赛（无共享状态，可并行）
+    async function runSemifinal(hero1gh: any, hero2gh: any) {
       const h1 = hero1gh.hero;
       const h2 = hero2gh.hero;
       let h1Hp = hero1gh.hp;
       let h2Hp = hero2gh.hp;
+      const matchEvents: Partial<GameEvent>[] = [];
 
-      events.push({
+      matchEvents.push({
         eventType: 'director_event',
         priority: 7,
         heroId: hero1gh.hero_id,
@@ -130,7 +130,6 @@ export async function POST(request: NextRequest) {
         data: { phase: 'semifinal' },
       } as any);
 
-      // 3 回合出招
       for (let r = 1; r <= FINALS_ROUNDS; r++) {
         const [res1, res2] = await Promise.all([
           getFinalsMove(hero1gh, h2.hero_name),
@@ -155,10 +154,8 @@ export async function POST(request: NextRequest) {
         h1Hp = Math.max(0, h1Hp + result.hero1HpDelta);
         h2Hp = Math.max(0, h2Hp + result.hero2HpDelta);
 
-        // --- Event 1: Hero 1 readies ---
-        events.push({
-          eventType: 'fight',
-          priority: 5,
+        matchEvents.push({
+          eventType: 'fight', priority: 5,
           heroId: hero1gh.hero_id,
           narrative: getReadyNarrative(h1.hero_name, moveName1, move1),
           innerThought: getInnerThought(h1.npc_template_id, h1.personality_type),
@@ -166,10 +163,8 @@ export async function POST(request: NextRequest) {
           data: { phase: 'semifinal', round: r, move: move1 },
         } as any);
 
-        // --- Event 2: Hero 2 readies ---
-        events.push({
-          eventType: 'fight',
-          priority: 5,
+        matchEvents.push({
+          eventType: 'fight', priority: 5,
           heroId: hero2gh.hero_id,
           narrative: getReadyNarrative(h2.hero_name, moveName2, move2),
           innerThought: getInnerThought(h2.npc_template_id, h2.personality_type),
@@ -177,60 +172,45 @@ export async function POST(request: NextRequest) {
           data: { phase: 'semifinal', round: r, move: move2 },
         } as any);
 
-        // --- Event 3: Clash result ---
         const clashText = getClashNarrative(
           h1.hero_name, h2.hero_name,
           moveName1, moveName2, move1, move2, result.result,
         );
 
-        // Determine proper hpDelta routing for EventRevealer
-        // EventRevealer applies hpDelta to targetHeroId for fight events
         if (result.hero1HpDelta < 0 && result.hero2HpDelta < 0) {
-          // Both hurt — two events
-          events.push({
+          matchEvents.push({
             eventType: 'fight', priority: 7,
-            heroId: hero1gh.hero_id,
-            targetHeroId: hero2gh.hero_id,
-            narrative: clashText,
-            hpDelta: result.hero2HpDelta,
+            heroId: hero1gh.hero_id, targetHeroId: hero2gh.hero_id,
+            narrative: clashText, hpDelta: result.hero2HpDelta,
             data: { round: r, move1, move2, result: result.result, h1Hp, h2Hp },
           } as any);
-          events.push({
+          matchEvents.push({
             eventType: 'fight', priority: 5,
-            heroId: hero2gh.hero_id,
-            targetHeroId: hero1gh.hero_id,
+            heroId: hero2gh.hero_id, targetHeroId: hero1gh.hero_id,
             narrative: `${h1.hero_name}也被反震之力波及！`,
             hpDelta: result.hero1HpDelta,
             data: { round: r, aftershock: true },
           } as any);
         } else if (result.hero2HpDelta < 0) {
-          // Hero2 takes damage
-          events.push({
+          matchEvents.push({
             eventType: 'fight', priority: 7,
-            heroId: hero1gh.hero_id,
-            targetHeroId: hero2gh.hero_id,
-            narrative: clashText,
-            taunt: getWinTaunt(h1.npc_template_id),
+            heroId: hero1gh.hero_id, targetHeroId: hero2gh.hero_id,
+            narrative: clashText, taunt: getWinTaunt(h1.npc_template_id),
             hpDelta: result.hero2HpDelta,
             data: { round: r, move1, move2, result: result.result, h1Hp, h2Hp },
           } as any);
         } else if (result.hero1HpDelta < 0) {
-          // Hero1 takes damage
-          events.push({
+          matchEvents.push({
             eventType: 'fight', priority: 7,
-            heroId: hero2gh.hero_id,
-            targetHeroId: hero1gh.hero_id,
-            narrative: clashText,
-            taunt: getWinTaunt(h2.npc_template_id),
+            heroId: hero2gh.hero_id, targetHeroId: hero1gh.hero_id,
+            narrative: clashText, taunt: getWinTaunt(h2.npc_template_id),
             hpDelta: result.hero1HpDelta,
             data: { round: r, move1, move2, result: result.result, h1Hp, h2Hp },
           } as any);
         } else {
-          // Draw / mutual heal
-          events.push({
+          matchEvents.push({
             eventType: 'fight', priority: 6,
-            heroId: hero1gh.hero_id,
-            targetHeroId: hero2gh.hero_id,
+            heroId: hero1gh.hero_id, targetHeroId: hero2gh.hero_id,
             narrative: clashText,
             data: { round: r, move1, move2, result: result.result, h1Hp, h2Hp },
           } as any);
@@ -241,22 +221,16 @@ export async function POST(request: NextRequest) {
 
       // 判定胜者
       let winner, loser;
-      if (h1Hp > h2Hp) {
-        winner = hero1gh; loser = hero2gh;
-      } else if (h2Hp > h1Hp) {
-        winner = hero2gh; loser = hero1gh;
-      } else {
+      if (h1Hp > h2Hp) { winner = hero1gh; loser = hero2gh; }
+      else if (h2Hp > h1Hp) { winner = hero2gh; loser = hero1gh; }
+      else {
         winner = (hero1gh.reputation || 0) >= (hero2gh.reputation || 0) ? hero1gh : hero2gh;
         loser = winner === hero1gh ? hero2gh : hero1gh;
       }
 
-      winners.push(winner);
-
-      events.push({
-        eventType: 'fight',
-        priority: 8,
-        heroId: winner.hero_id,
-        targetHeroId: loser.hero_id,
+      matchEvents.push({
+        eventType: 'fight', priority: 8,
+        heroId: winner.hero_id, targetHeroId: loser.hero_id,
         narrative: `🎉 ${winner.hero.hero_name} 击败 ${loser.hero.hero_name}，晋级决赛！`,
         taunt: getWinTaunt(winner.hero.npc_template_id),
         innerThought: getLoseReaction(loser.hero.npc_template_id),
@@ -267,6 +241,19 @@ export async function POST(request: NextRequest) {
         supabaseAdmin.from('game_heroes').update({ hp: h1Hp }).eq('id', hero1gh.id),
         supabaseAdmin.from('game_heroes').update({ hp: h2Hp }).eq('id', hero2gh.id),
       ]);
+
+      return { winner, matchEvents };
+    }
+
+    // 并行运行所有半决赛（2场同时进行，速度翻倍）
+    const matchResults = await Promise.all(
+      matchups.map(([h1, h2]) => runSemifinal(h1, h2))
+    );
+
+    const winners: any[] = [];
+    for (const result of matchResults) {
+      events.push(...result.matchEvents);
+      winners.push(result.winner);
     }
 
     // === 半决赛后：进入神兵助战阶段（或直接结束）===

@@ -72,7 +72,7 @@ Admin:
 The heart of the application. Key modules:
 
 - **`engine.ts`** — `processRound()` orchestrates each round: idempotent status locking via DB update, decision collection, resolution, event writing, state cache update. Has crash recovery (30s stuck detection).
-- **`combat.ts`** — Damage formulas: `AttackPower = str*0.4 + innerForce*0.3 + martialBonus`, `DefensePower = con*0.3 + agi*0.2 + martialBonus`, `Damage = max(5, attack - defense)`. Finals uses rock-paper-scissors with bluff mechanic.
+- **`combat.ts`** — Damage formulas: `AttackPower = str*0.6 + innerForce*0.5 + martialBonus`, `DefensePower = con*0.3 + agi*0.2 + martialBonus`, `Damage = max(5, attack - defense)`. Finals uses rock-paper-scissors with bluff mechanic.
 - **`npc-decisions.ts`** — Weighted random action selection for NPCs, modified by personality and game traits. Special rules for specific NPCs (alwaysFightStrongest, pairedWith, betrayRound).
 - **`secondme-client.ts`** — Wraps SecondMe chat API for real player decisions. Includes token refresh logic.
 - **`prompts.ts`** — LLM prompt templates and per-round director events (R1: scroll scramble, R2: master training, R3: betrayal, R4: wanted bounty, R5: death pact).

@@ -78,7 +78,10 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json(withDynamic, {
+  // 移除仅供引擎内部使用的字段，减少轮询响应体积
+  const { pendingInfluences, awardedAchievements, ...clientState } = withDynamic;
+
+  return NextResponse.json(clientState, {
     headers: {
       'Cache-Control': 'no-cache',
       'ETag': etag,

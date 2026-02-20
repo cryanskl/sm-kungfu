@@ -15,7 +15,7 @@ import FullScreenEffect from '@/components/game/FullScreenEffect';
 import AchievementToast from '@/components/game/AchievementToast';
 import { soundManager } from '@/lib/sound';
 import { bgmManager } from '@/lib/bgm';
-import { GOSSIP_LINES, LOADING_LINES, INTRO_DURATION } from '@/lib/game/constants';
+import { GOSSIP_LINES, LOADING_LINES, INTRO_DURATION, INITIAL_HP, INITIAL_MORALITY, INITIAL_CREDIT } from '@/lib/game/constants';
 import { useEventRevealer } from '@/hooks/useEventRevealer';
 import { generateCommentary, generateWelcomeDanmaku, resetEliminationCount, generateCelebrationDanmaku } from '@/lib/game/commentary';
 
@@ -117,6 +117,7 @@ export default function Home() {
         timerRef.current = setTimeout(() => triggerChooseStart(gameId, nextRound), 1500);
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- triggerChooseStart is stable (useCallback) but declared later
   }, [isRevealing, gameState?.status, gameState?.gameId]);
 
   // 兜底：轮询发现状态停留超时且未在处理中，强制触发
@@ -189,6 +190,7 @@ export default function Home() {
     }
 
     return () => { if (stuckCheckRef.current) { clearInterval(stuckCheckRef.current); stuckCheckRef.current = null; } };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- trigger callbacks are stable (useCallback) but declared later
   }, [gameState?.status, gameState?.gameId]);
 
   // 选择阶段截止后自动触发回合解算
@@ -211,6 +213,7 @@ export default function Home() {
     }, delay);
 
     return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- triggerRound is stable (useCallback) but declared later
   }, [gameState?.status, gameState?.choosingDeadline]);
 
   // === Init: 并行拉取 auth + game state，消除白屏 ===
@@ -701,6 +704,32 @@ export default function Home() {
       } else if (res.ok) {
         setJoinToast('入座成功！等待其他侠客加入…');
         setTimeout(() => setJoinToast(null), 3000);
+        // Optimistic UI: inject hero into local state immediately
+        const hero = user.hero;
+        const currentGS = useWulinStore.getState().gameState;
+        if (hero && data.seat && currentGS) {
+          const optimisticHero = {
+            heroId: hero.id,
+            heroName: hero.heroName || '无名',
+            faction: hero.faction || '少林',
+            personalityType: hero.personalityType || 'random',
+            seatNumber: data.seat,
+            hp: INITIAL_HP, maxHp: INITIAL_HP,
+            reputation: 0, hot: 0,
+            morality: INITIAL_MORALITY, credit: INITIAL_CREDIT,
+            isEliminated: false, allyHeroId: null, allyHeroName: null,
+            martialArts: [], hasDeathPact: false, isNpc: false,
+            catchphrase: hero.catchphrase || '……',
+            avatarUrl: hero.avatarUrl || null,
+            strength: hero.strength || 10, innerForce: hero.innerForce || 10,
+            agility: hero.agility || 10, wisdom: hero.wisdom || 10,
+            constitution: hero.constitution || 10, charisma: hero.charisma || 10,
+          };
+          const existing = currentGS.heroes || [];
+          if (!existing.some((h: any) => h.heroId === hero.id)) {
+            setGameState({ ...currentGS, heroes: [...existing, optimisticHero] });
+          }
+        }
         pollNow();
       } else {
         setErrorMsg(data.error || '入座失败');
@@ -729,7 +758,7 @@ export default function Home() {
     if (isProcessingRef.current) return;
     setIsProcessing(true);
     const ac = new AbortController();
-    const tm = setTimeout(() => ac.abort(), 30000);
+    const tm = setTimeout(() => ac.abort('timeout'), 30000);
     try {
       const res = await fetch('/api/engine/start', { method: 'POST', headers: ENGINE_HEADERS, signal: ac.signal });
       if (res.ok) {
@@ -740,7 +769,7 @@ export default function Home() {
         console.error('Start failed:', await res.text());
         pollNow();
       }
-    } catch (e) { console.error('Start error:', e); pollNow(); }
+    } catch (e: any) { if (e?.name !== 'AbortError') console.error('Start error:', e); pollNow(); }
     finally { clearTimeout(tm); setIsProcessing(false); }
   }, [setGameState, pollNow]);
 
@@ -751,7 +780,7 @@ export default function Home() {
     setLoadingLine(LOADING_LINES[Math.floor(Math.random() * LOADING_LINES.length)]);
     const snapshot = useWulinStore.getState().gameState?.heroes || [];
     const ac = new AbortController();
-    const tm = setTimeout(() => ac.abort(), 30000);
+    const tm = setTimeout(() => ac.abort('timeout'), 30000);
     try {
       const res = await fetch('/api/engine/round', {
         method: 'POST',
@@ -772,7 +801,7 @@ export default function Home() {
         const viewId = useWulinStore.getState().viewingHeroId || useWulinStore.getState().user.heroId || null;
         startReveal(evts, snapshot, 35000, viewId, () => setMyEventsCompleted(true));
       }
-    } catch (e) { console.error('Round error:', e); pollNow(); }
+    } catch (e: any) { if (e?.name !== 'AbortError') console.error('Round error:', e); pollNow(); }
     finally { clearTimeout(tm); setIsProcessing(false); }
   }, [startReveal, setGameState, pollNow, setMyEventsCompleted]);
 
@@ -809,7 +838,7 @@ export default function Home() {
     setLoadingLine(LOADING_LINES[Math.floor(Math.random() * LOADING_LINES.length)]);
     const snapshot = useWulinStore.getState().gameState?.heroes || [];
     const ac = new AbortController();
-    const tm = setTimeout(() => ac.abort(), 30000);
+    const tm = setTimeout(() => ac.abort('timeout'), 30000);
     try {
       const res = await fetch('/api/engine/finals', {
         method: 'POST',
@@ -829,7 +858,7 @@ export default function Home() {
         const viewId = useWulinStore.getState().viewingHeroId || useWulinStore.getState().user.heroId || null;
         startReveal(evts, snapshot, 10000, viewId, () => setMyEventsCompleted(true));
       }
-    } catch (e) { console.error('Finals error:', e); pollNow(); }
+    } catch (e: any) { if (e?.name !== 'AbortError') console.error('Finals error:', e); pollNow(); }
     finally { clearTimeout(tm); setIsProcessing(false); }
   }, [startReveal, setGameState, pollNow, setMyEventsCompleted]);
 
@@ -838,7 +867,7 @@ export default function Home() {
     setIsProcessing(true);
     const snapshot = useWulinStore.getState().gameState?.heroes || [];
     const ac = new AbortController();
-    const tm = setTimeout(() => ac.abort(), 30000);
+    const tm = setTimeout(() => ac.abort('timeout'), 30000);
     try {
       const res = await fetch('/api/engine/final', {
         method: 'POST',
@@ -858,7 +887,7 @@ export default function Home() {
         const viewId = useWulinStore.getState().viewingHeroId || useWulinStore.getState().user.heroId || null;
         startReveal(evts, snapshot, 10000, viewId, () => setMyEventsCompleted(true));
       }
-    } catch (e) { console.error('Final error:', e); pollNow(); }
+    } catch (e: any) { if (e?.name !== 'AbortError') console.error('Final error:', e); pollNow(); }
     finally { clearTimeout(tm); setIsProcessing(false); }
   }, [startReveal, setGameState, pollNow, setMyEventsCompleted]);
 

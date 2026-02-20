@@ -45,12 +45,6 @@ export function ActiveGamePhase({
   // 实际展示的视角 ID（null 表示自己 / 全局）
   const activeViewId = viewingHeroId || myHeroId;
 
-  // 按视角过滤事件用于高亮显示
-  const isEventRelated = (event: Partial<GameEvent>) => {
-    if (!activeViewId) return true;
-    return event.heroId === activeViewId || event.targetHeroId === activeViewId;
-  };
-
   // 移动端紧凑血量摘要（memoized，避免每次轮询重排序）
   const sortedAlive = useMemo(() =>
     liveHeroes.filter(h => !h.isEliminated).sort((a, b) => (b.hp || 0) - (a.hp || 0)),

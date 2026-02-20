@@ -62,7 +62,7 @@ export async function prefetchDecisions(gameId: string, roundNumber: number): Pr
     }
 
     const snapshots = gameHeroesToSnapshots(gameHeroes);
-    const decisions = await collectDecisions(gameId, roundNumber, gameHeroes, snapshots);
+    const { decisions } = await collectDecisions(gameId, roundNumber, gameHeroes, snapshots);
 
     decisionCache.set(key, decisions);
     console.log(`[Prefetch] ✓ round=${roundNumber} done in ${Date.now()-t0}ms, ${decisions.size} decisions cached`);
@@ -266,6 +266,7 @@ export async function processRound(gameId: string, roundNumber: number): Promise
   // 1. 收集所有决策（优先从预取缓存读取）
   const key = cacheKey(gameId, roundNumber);
   let decisions: Map<string, Decision>;
+  let lastAttackerMap: Map<string, string> | undefined;
   const cached = decisionCache.get(key);
   if (cached) {
     decisions = cached;
@@ -273,11 +274,13 @@ export async function processRound(gameId: string, roundNumber: number): Promise
     console.log(`[Engine] ⚡ round=${roundNumber} using prefetched decisions (${decisions.size} cached)`);
   } else {
     console.log(`[Engine] 🐢 round=${roundNumber} no prefetch cache, collecting decisions now...`);
-    decisions = await collectDecisions(gameId, roundNumber, gameHeroes, snapshots);
+    const collected = await collectDecisions(gameId, roundNumber, gameHeroes, snapshots);
+    decisions = collected.decisions;
+    lastAttackerMap = collected.lastAttackerMap;
   }
 
-  // 2. 结算
-  const events = await resolveRound(gameId, roundNumber, decisions, gameHeroes, snapshots);
+  // 2. 结算（复用 collectDecisions 的 lastAttackerMap，避免重复 DB 查询）
+  const events = await resolveRound(gameId, roundNumber, decisions, gameHeroes, snapshots, lastAttackerMap);
 
   // 3. 写入事件
   if (events.length > 0) {
@@ -379,7 +382,7 @@ async function collectDecisions(
   roundNumber: number,
   gameHeroes: any[],
   snapshots: GameHeroSnapshot[],
-): Promise<Map<string, Decision>> {
+): Promise<{ decisions: Map<string, Decision>; lastAttackerMap: Map<string, string> }> {
   const decisions = new Map<string, Decision>();
   const directorEvent = getDirectorEvent(roundNumber, gameId);
   const aliveHeroes = gameHeroes.filter((gh: any) => !gh.is_eliminated);
@@ -494,7 +497,7 @@ async function collectDecisions(
     }
   }
 
-  return decisions;
+  return { decisions, lastAttackerMap };
 }
 
 // ============================================================
@@ -507,6 +510,7 @@ async function resolveRound(
   decisions: Map<string, Decision>,
   gameHeroes: any[],
   snapshots: GameHeroSnapshot[],
+  prebuiltLastAttackerMap?: Map<string, string>,
 ): Promise<Partial<GameEvent>[]> {
   const events: Partial<GameEvent>[] = [];
   const updates: Map<string, Record<string, any>> = new Map();
@@ -870,18 +874,23 @@ async function resolveRound(
     addDelta(updates, target, 'reputation', -stolenRep);
   }
 
-  // --- 构建上轮攻击映射（复仇 buff 用）---
-  const lastAttackerMap = new Map<string, string>();
-  if (roundNumber > 1) {
-    const { data: prevFights } = await supabaseAdmin
-      .from('game_events')
-      .select('hero_id, target_hero_id')
-      .eq('game_id', gameId)
-      .eq('round', roundNumber - 1)
-      .in('event_type', ['fight', 'gang_up']);
-    if (prevFights) {
-      for (const evt of prevFights) {
-        if (evt.target_hero_id) lastAttackerMap.set(evt.target_hero_id, evt.hero_id);
+  // --- 构建上轮攻击映射（复仇 buff 用，复用 collectDecisions 的结果避免重复查询）---
+  let lastAttackerMap: Map<string, string>;
+  if (prebuiltLastAttackerMap) {
+    lastAttackerMap = prebuiltLastAttackerMap;
+  } else {
+    lastAttackerMap = new Map<string, string>();
+    if (roundNumber > 1) {
+      const { data: prevFights } = await supabaseAdmin
+        .from('game_events')
+        .select('hero_id, target_hero_id')
+        .eq('game_id', gameId)
+        .eq('round', roundNumber - 1)
+        .in('event_type', ['fight', 'gang_up']);
+      if (prevFights) {
+        for (const evt of prevFights) {
+          if (evt.target_hero_id) lastAttackerMap.set(evt.target_hero_id, evt.hero_id);
+        }
       }
     }
   }

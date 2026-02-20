@@ -87,45 +87,41 @@ export async function POST(request: NextRequest) {
 
       const npcs = pickRandomNpcs(npcNeeded, existingNpcIds);
 
-      for (let i = 0; i < npcs.length; i++) {
-        const template = npcs[i];
+      // Batch upsert all NPC heroes (1 query instead of N)
+      const npcRows = npcs.map(template => ({
+        user_id: `npc_${template.id}`,
+        is_npc: true,
+        npc_template_id: template.id,
+        hero_name: template.heroName,
+        faction: template.faction,
+        personality_type: template.personalityType,
+        catchphrase: template.catchphrase,
+        strength: template.strength,
+        inner_force: template.innerForce,
+        agility: template.agility,
+        wisdom: template.wisdom,
+        constitution: template.constitution,
+        charisma: template.charisma,
+        backstory: template.backstory || null,
+      }));
 
-        // 创建 NPC 英雄记录
-        const { data: npcHero } = await supabaseAdmin
-          .from('heroes')
-          .upsert({
-            user_id: `npc_${template.id}`,
-            is_npc: true,
-            npc_template_id: template.id,
-            hero_name: template.heroName,
-            faction: template.faction,
-            personality_type: template.personalityType,
-            catchphrase: template.catchphrase,
-            strength: template.strength,
-            inner_force: template.innerForce,
-            agility: template.agility,
-            wisdom: template.wisdom,
-            constitution: template.constitution,
-            charisma: template.charisma,
-            backstory: template.backstory || null,
-          }, { onConflict: 'user_id' })
-          .select()
-          .single();
+      const { data: npcHeroes } = await supabaseAdmin
+        .from('heroes')
+        .upsert(npcRows, { onConflict: 'user_id' })
+        .select();
 
-        if (npcHero) {
-          const seatNumber = currentCount + i + 1;
-          await supabaseAdmin
-            .from('game_heroes')
-            .insert({
-              game_id: currentGame.id,
-              hero_id: npcHero.id,
-              seat_number: seatNumber,
-              hp: INITIAL_HP,
-              morality: INITIAL_MORALITY,
-              credit: INITIAL_CREDIT,
-              game_trait: pickRandomTrait(),
-            });
-        }
+      // Batch insert all game_heroes (1 query instead of N)
+      if (npcHeroes && npcHeroes.length > 0) {
+        const gameHeroRows = npcHeroes.map((npcHero: any, i: number) => ({
+          game_id: currentGame.id,
+          hero_id: npcHero.id,
+          seat_number: currentCount + i + 1,
+          hp: INITIAL_HP,
+          morality: INITIAL_MORALITY,
+          credit: INITIAL_CREDIT,
+          game_trait: pickRandomTrait(),
+        }));
+        await supabaseAdmin.from('game_heroes').insert(gameHeroRows);
       }
     }
 
