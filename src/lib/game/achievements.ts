@@ -115,7 +115,7 @@ const ACHIEVEMENTS: AchievementDef[] = [
       const scrambles = ctx.allEvents.filter((e: any) =>
         e.event_type === 'scramble' && e.round === 1 && e.hero_id === ctx.heroId
       );
-      return scrambles.some((e: any) => e.data?.rank === 1);
+      return scrambles.some((e: any) => e.data?.won === true);
     },
   },
   {
@@ -331,26 +331,31 @@ export async function evaluateAndAwardAchievements(
   battleStats: BattleStats,
 ): Promise<AchievementUnlock[]> {
   const allUnlocks: AchievementUnlock[] = [];
+  const heroIds = gameHeroes.map((gh: any) => gh.hero_id);
+
+  // 批量查询：已解锁成就 + 英雄生涯数据（替代 N+1 串行查询）
+  const [{ data: allExisting }, { data: allHeroRecords }] = await Promise.all([
+    supabaseAdmin.from('hero_achievements').select('hero_id, achievement_id').in('hero_id', heroIds),
+    supabaseAdmin.from('heroes').select('id, lifetime_stats, total_wins, total_games').in('id', heroIds),
+  ]);
+
+  const existingMap = new Map<string, Set<string>>();
+  for (const a of allExisting || []) {
+    if (!existingMap.has(a.hero_id)) existingMap.set(a.hero_id, new Set());
+    existingMap.get(a.hero_id)!.add(a.achievement_id);
+  }
+  const heroRecordMap = new Map((allHeroRecords || []).map(h => [h.id, h]));
+
+  // 内存评估（无 DB 调用）
+  const pendingUpserts: { hero_id: string; achievement_id: string; game_id: string }[] = [];
+  const pendingLifetimeUpdates: { heroId: string; lifetime: Record<string, number> }[] = [];
 
   for (const gh of gameHeroes) {
     const heroId = gh.hero_id;
     const heroName = gh.hero?.hero_name || '无名';
     const isNpc = gh.hero?.is_npc || false;
-
-    // 获取已解锁成就
-    const { data: existing } = await supabaseAdmin
-      .from('hero_achievements')
-      .select('achievement_id')
-      .eq('hero_id', heroId);
-
-    const existingIds = new Set((existing || []).map((a: any) => a.achievement_id));
-
-    // 获取 lifetime_stats
-    const { data: heroRecord } = await supabaseAdmin
-      .from('heroes')
-      .select('lifetime_stats, total_wins, total_games')
-      .eq('id', heroId)
-      .single();
+    const existingIds = existingMap.get(heroId) || new Set();
+    const heroRecord = heroRecordMap.get(heroId);
 
     const lifetimeStats: Record<string, number> = {
       ...(heroRecord?.lifetime_stats || {}),
@@ -359,55 +364,25 @@ export async function evaluateAndAwardAchievements(
     };
 
     const ctx: AchievementContext = {
-      heroId,
-      heroName,
-      isNpc,
-      gameHero: gh,
-      allEvents,
-      titleAwards,
-      battleStats,
-      lifetimeStats,
+      heroId, heroName, isNpc, gameHero: gh,
+      allEvents, titleAwards, battleStats, lifetimeStats,
       existingAchievements: Array.from(existingIds),
     };
 
-    // 检查每个成就
-    const newAchievements: AchievementDef[] = [];
     for (const achievement of ACHIEVEMENTS) {
       if (existingIds.has(achievement.id)) continue;
       try {
         if (achievement.evaluate(ctx)) {
-          newAchievements.push(achievement);
+          pendingUpserts.push({ hero_id: heroId, achievement_id: achievement.id, game_id: gameId });
+          allUnlocks.push({
+            heroId, heroName,
+            achievementId: achievement.id, achievementName: achievement.name,
+            icon: achievement.icon, points: achievement.points,
+          });
         }
-      } catch {
-        // 评估出错跳过
-      }
+      } catch { /* 评估出错跳过 */ }
     }
 
-    // 写入数据库
-    if (newAchievements.length > 0) {
-      const rows = newAchievements.map(a => ({
-        hero_id: heroId,
-        achievement_id: a.id,
-        game_id: gameId,
-      }));
-
-      await supabaseAdmin.from('hero_achievements').upsert(rows, {
-        onConflict: 'hero_id,achievement_id',
-      });
-
-      for (const a of newAchievements) {
-        allUnlocks.push({
-          heroId,
-          heroName,
-          achievementId: a.id,
-          achievementName: a.name,
-          icon: a.icon,
-          points: a.points,
-        });
-      }
-    }
-
-    // 更新 lifetime_stats
     const gameStats = extractGameStats(heroId, allEvents);
     const updatedLifetime: Record<string, number> = { ...lifetimeStats };
     updatedLifetime.killCount = (updatedLifetime.killCount || 0) + gameStats.killCount;
@@ -415,13 +390,71 @@ export async function evaluateAndAwardAchievements(
     updatedLifetime.trainCount = (updatedLifetime.trainCount || 0) + gameStats.trainCount;
     updatedLifetime.fightCount = (updatedLifetime.fightCount || 0) + gameStats.fightCount;
     updatedLifetime.allyCount = (updatedLifetime.allyCount || 0) + gameStats.allyCount;
-
-    await supabaseAdmin.from('heroes').update({
-      lifetime_stats: updatedLifetime,
-    }).eq('id', heroId);
+    pendingLifetimeUpdates.push({ heroId, lifetime: updatedLifetime });
   }
 
+  // 批量写入（1次 upsert + 并行 update）
+  await Promise.all([
+    pendingUpserts.length > 0
+      ? supabaseAdmin.from('hero_achievements').upsert(pendingUpserts, { onConflict: 'hero_id,achievement_id' })
+      : Promise.resolve(),
+    ...pendingLifetimeUpdates.map(u =>
+      supabaseAdmin.from('heroes').update({ lifetime_stats: u.lifetime }).eq('id', u.heroId)
+    ),
+  ]);
+
   return allUnlocks;
+}
+
+/**
+ * 即时成就评估（每轮结束后调用，不做 DB 写入）
+ * 返回本轮新触发的成就 — 用于前端 toast 展示
+ */
+export function evaluateInstantAchievementsInMemory(
+  gameHeroes: any[],
+  allEvents: any[],
+  alreadyAwarded: string[],
+): AchievementUnlock[] {
+  const newUnlocks: AchievementUnlock[] = [];
+  const awardedSet = new Set(alreadyAwarded);
+
+  for (const gh of gameHeroes) {
+    const heroId = gh.hero_id;
+    const heroName = gh.hero?.hero_name || '无名';
+
+    const ctx: AchievementContext = {
+      heroId,
+      heroName,
+      isNpc: gh.hero?.is_npc || false,
+      gameHero: gh,
+      allEvents,
+      titleAwards: [],
+      battleStats: {} as any,
+      lifetimeStats: {},
+      existingAchievements: [],
+    };
+
+    for (const achievement of ACHIEVEMENTS) {
+      if (achievement.category !== 'instant') continue;
+      const key = `${heroId}:${achievement.id}`;
+      if (awardedSet.has(key)) continue;
+      try {
+        if (achievement.evaluate(ctx)) {
+          awardedSet.add(key);
+          newUnlocks.push({
+            heroId,
+            heroName,
+            achievementId: achievement.id,
+            achievementName: achievement.name,
+            icon: achievement.icon,
+            points: achievement.points,
+          });
+        }
+      } catch { /* skip */ }
+    }
+  }
+
+  return newUnlocks;
 }
 
 /**

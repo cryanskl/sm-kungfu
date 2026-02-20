@@ -12,6 +12,7 @@ import { ActiveGamePhase } from '@/components/game/phases/ActiveGamePhase';
 import { EndedPhase } from '@/components/game/phases/EndedPhase';
 import { ArtifactSelectionPanel } from '@/components/game/ArtifactSelectionPanel';
 import FullScreenEffect from '@/components/game/FullScreenEffect';
+import AchievementToast from '@/components/game/AchievementToast';
 import { soundManager } from '@/lib/sound';
 import { bgmManager } from '@/lib/bgm';
 import { GOSSIP_LINES, LOADING_LINES, INTRO_DURATION } from '@/lib/game/constants';
@@ -912,6 +913,7 @@ export default function Home() {
 
       <DanmakuOverlay />
       <FullScreenEffect />
+      <AchievementToast />
 
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 py-6 overflow-y-auto">
         {(status === 'waiting' || status === 'countdown') && (
